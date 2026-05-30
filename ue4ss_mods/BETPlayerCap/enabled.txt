@@ -1,0 +1,6 @@
+return {
+    name = "BETPlayerCap",
+    version = "0.1.0",
+    description = "Logging-first player cap investigation mod for Backrooms Escape Together",
+    author = "TNTcraft + Claude",
+}
