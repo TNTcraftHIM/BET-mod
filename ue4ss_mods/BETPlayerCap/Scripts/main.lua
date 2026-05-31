@@ -1,6 +1,6 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.5-host-anchor"
+local VERSION = "2.6-levelswitch"
 
 -- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
 -- resolution and GameState-based player enumeration (level-independent).
@@ -277,6 +277,30 @@ local FIX_MAX_TICKS = 8      -- only attempt fix within this many ticks of level
 local last_median_z = nil
 local settled_reads = 0
 
+-- v2.6 LEVEL-SWITCH (test tool). BET travels between levels via ProcessServerTravel
+-- (seamless), confirmed in BET.log. We use the same path so all clients are carried
+-- along (no drop). Ctrl+H cycles to the next level. Map paths follow the confirmed
+-- pattern /Game/Maps/MainLevels/Level_<N>/L_Level_<N> (see docs/level_structure.md).
+-- NOTE: jumping straight to a level bypasses the lobby start + elevator progression,
+-- so level OBJECTIVES may not init — this is a SPAWN/travel test aid, not normal play.
+local LEVEL_MAPS = {
+    "/Game/Maps/MainLevels/Level_Neg1/L_Level_Neg1",
+    "/Game/Maps/MainLevels/Level_0/L_Level_0",
+    "/Game/Maps/MainLevels/Level_1/L_Level_1",
+    "/Game/Maps/MainLevels/Level_2/L_Level_2",
+    "/Game/Maps/MainLevels/Level_3/L_Level_3",
+    "/Game/Maps/MainLevels/Level_4/L_Level_4",
+    "/Game/Maps/MainLevels/Level_6/L_Level_6",
+    "/Game/Maps/MainLevels/Level_37/L_Level_37",
+    "/Game/Maps/MainLevels/Level_232/L_Level_232",
+    "/Game/Maps/MainLevels/Level_FUN/L_Level_FUN",
+    "/Game/Maps/MainLevels/Level_Hub/L_Level_Hub",
+    "/Game/Maps/MainLevels/Level_Run/L_Level_Run",
+}
+local level_cycle_idx = 0          -- 0 = before first press; advances each Ctrl+H
+local summon_after_travel = false  -- set true on travel so post-load we auto-gather
+local travel_arm_tick = 0          -- tick when we armed the post-travel summon
+
 -- Dynamic spawn data (populated at runtime from actual PlayerStart objects)
 local level0_spawns = {}
 local level0_z = nil
@@ -546,6 +570,82 @@ local function ensure_summon_keybind()
     end
 end
 
+-- Detect the currently-loaded main level by matching a live GameMode instance
+-- against the per-level gamemode names. Returns the LEVEL_MAPS index or nil.
+-- Lets Ctrl+H "cycle from where we are" rather than from a stale counter.
+local LEVEL_GM_BY_INDEX = {
+    "BP_LevelNeg1GameMode_C", "BP_Level0GameMode_C", "BP_Level1_GameMode_C",
+    "BP_Level2GameMode_C", "BP_Level3GameMode_C", "BP_Level4GameMode_C",
+    "BP_Level6GameMode_C", "BP_Level37GameMode_C", "BP_Level232GameMode_C",
+    "BP_LevelFUNGameMode_C", "BP_LevelHubGameMode_C", "BP_LevelRunGameMode_C",
+}
+local function detect_current_level_idx()
+    for i, gm in ipairs(LEVEL_GM_BY_INDEX) do
+        if find_first_instance(gm) then return i end
+    end
+    return nil
+end
+
+-- Seamless ServerTravel to a map (same mechanism BET uses: ProcessServerTravel).
+-- Carries all connected clients along — nobody is dropped. ?listen keeps the
+-- listen-server net driver. Host authority required (host runs this mod).
+local function server_travel(map_path)
+    local cmd = "servertravel " .. map_path .. "?listen"
+    local ok = pcall(function()
+        if ExecuteConsoleCommand then ExecuteConsoleCommand(cmd) end
+    end)
+    if not ok or not ExecuteConsoleCommand then
+        -- Fallback: KismetSystemLibrary.ExecuteConsoleCommand via a PlayerController
+        local pc = UEHelpers and safe("TravelPC", function()
+            return UEHelpers.GetPlayerController()
+        end)
+        if pc then
+            safe("TravelKSL", function()
+                local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+                ksl:ExecuteConsoleCommand(pc:GetWorld(), cmd, pc)
+                return true
+            end)
+        end
+    end
+    log("[LEVELSW] ServerTravel -> " .. map_path)
+end
+
+-- Ctrl+H: cycle to the NEXT level (relative to the one we're actually in, if
+-- detectable; else relative to our own counter). Arms a post-travel summon so
+-- everyone is gathered on arrival.
+local function cycle_next_level()
+    local cur = detect_current_level_idx() or level_cycle_idx
+    local nxt = (cur % #LEVEL_MAPS) + 1
+    level_cycle_idx = nxt
+    summon_after_travel = true
+    travel_arm_tick = diag_tick
+    -- reset spawn-fix state so the auto-fix re-arms in the new level
+    spawn_fix_applied = false
+    level_detected = false
+    scan_done = false
+    last_median_z = nil
+    settled_reads = 0
+    log(string.format("[LEVELSW] Ctrl+H: level %d -> %d (%s)",
+        cur, nxt, LEVEL_MAPS[nxt]))
+    server_travel(LEVEL_MAPS[nxt])
+end
+
+local levelsw_bound = false
+local function ensure_levelsw_keybind()
+    if levelsw_bound then return end
+    local ok = pcall(function()
+        RegisterKeyBind(Key.H, {ModifierKey.CONTROL}, function()
+            ExecuteInGameThread(function() pcall(cycle_next_level) end)
+        end)
+    end)
+    if ok then
+        levelsw_bound = true
+        log("[LEVELSW] Host keybind registered: Ctrl+H = cycle to next level (test tool)")
+    else
+        log("[LEVELSW] RegisterKeyBind failed — level-switch keybind unavailable")
+    end
+end
+
 -- RELATIVE cluster-outlier teleport. Target = the HOST pawn's live position
 -- (level-independent), falling back to the majority-cluster median only if the
 -- host can't be resolved or the host is itself the outlier.
@@ -661,8 +761,9 @@ local function run_monitor()
             level_detected = true
             level_detect_time = diag_tick
             log("[DIAG] Game level detected via " .. tostring(via) .. " at tick " .. diag_tick)
-            -- Register the host summon keybind now that we're in a real level.
+            -- Register host keybinds now that we're in a real level.
             ensure_summon_keybind()
+            ensure_levelsw_keybind()
         else
             return
         end
@@ -690,6 +791,15 @@ local function run_monitor()
     elseif not spawn_fix_applied and since_detect == (FIX_MAX_TICKS + 1) then
         log("[SPAWN] Fix window closed — leaving positions as-is (Neg1 may be intentional now)")
         spawn_fix_applied = true
+    end
+
+    -- Phase 3b: post-Ctrl+H travel auto-summon. After a level switch we arm a
+    -- gather so everyone ends up together on arrival. Wait a few ticks after the
+    -- new level is detected (let pawns possess + settle), then summon once.
+    if summon_after_travel and level_detected and (diag_tick - level_detect_time) >= 2 then
+        log("[LEVELSW] Post-travel auto-summon")
+        pcall(summon_all_to_host)
+        summon_after_travel = false
     end
 
     -- Phase 4: Periodic diagnostics (every 30s = every 3rd tick).
@@ -726,4 +836,5 @@ end)
 log("init complete - adaptive v" .. VERSION)
 log("[ADAPT] Position detection: will try 5 methods (GetActorLocation, K2_GetActorLocation, RootComponent.RelativeLocation, RootComponent.XYZ, GetTransform)")
 log("[SUMMON] Host keybind Ctrl+G (gather all players to host) will arm once in a real level")
+log("[LEVELSW] Host keybind Ctrl+H (cycle to next level, TEST tool) will arm once in a real level")
 log("[ADAPT] UEHelpers " .. (UEHelpers and "loaded" or "NOT FOUND — host-anchor disabled, will use cluster median"))

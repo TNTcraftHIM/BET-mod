@@ -2,6 +2,34 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.6-levelswitch (2026-05-31)
+
+### Test tooling: one-key level switch + clarified summon availability
+
+- **New host keybind Ctrl+H = "cycle to next level"** (test aid). Uses
+  `servertravel <map>?listen` — the same seamless `ProcessServerTravel` mechanism
+  BET itself uses (confirmed in BET.log), so all connected clients are carried
+  along and nobody is dropped. Detects the current level from its live GameMode
+  instance and advances to the next in the canonical order
+  (Neg1→0→1→2→3→4→6→37→232→FUN→Hub→Run→wrap). Map paths follow the confirmed
+  `/Game/Maps/MainLevels/Level_<N>/L_Level_<N>` pattern.
+- **Auto-bring + summon on arrival**: after a Ctrl+H switch, the mod re-arms its
+  per-level state and, a couple of ticks after the new level is detected (pawns
+  possessed + settled), runs a one-shot `summon_all_to_host` so everyone ends up
+  together at the new spawn. Console-command travel with a KismetSystemLibrary
+  fallback (`StaticFindObject` of the CDO — confirmed available via other shipped mods).
+- Caveat documented in-code: jumping straight to a level bypasses the lobby start
+  and elevator progression, so level OBJECTIVES may not initialize. This is a
+  SPAWN/travel test aid, not a way to play through normally.
+
+### Summon availability (clarification, no behavior change from v2.5)
+
+- The **automatic** spawn fix is **spawn-time-only** (gated to `FIX_MAX_TICKS` after
+  level load, then self-disables) so it never rubber-bands a player who walks into
+  Neg1 on purpose later.
+- The **Ctrl+G "Summon All"** keybind has **no time gate** — usable **anytime** for
+  the whole session, repeatable. It is the manual escape hatch.
+
 ## v2.5-host-anchor (2026-05-31)
 
 ### Level-INDEPENDENT spawn gathering: host anchor + host summon keybind
