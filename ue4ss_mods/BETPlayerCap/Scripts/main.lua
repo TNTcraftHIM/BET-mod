@@ -1,6 +1,6 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.9-elevator"
+local VERSION = "2.10-gather-fix"
 
 -- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
 -- resolution and GameState-based player enumeration (level-independent).
@@ -514,13 +514,26 @@ local function teleport_pawn(pawn, dest, label)
     return false, after
 end
 
--- Ring offset around an anchor so N pawns don't stack on one point (telefrag).
+-- Ring offset around an anchor so N pawns don't stack on one exact point.
+-- TIGHT footprint by design: the 7-player test proved a 150u ring reaches PAST
+-- the spawn-platform edge and drops players into the void (3 players fell to
+-- Z=-18853/-12257/-19473 after a 150u summon on Level 1). Player capsules
+-- interpenetrate and the engine nudges them apart, so heavy overlap is SAFE
+-- (no telefrag death in this game) whereas a wide ring is NOT. So we keep the
+-- whole cluster well inside one floor tile: first pawn on the anchor, the rest
+-- in a small ring whose radius is capped low and grows only slightly with N.
 local function ring_dest(anchor, i, n)
     if n <= 1 then
         return {X = anchor.X, Y = anchor.Y, Z = anchor.Z + 50}
     end
-    local R = 150
-    local theta = (i - 1) * (2 * math.pi / n)
+    if i == 1 then
+        -- anchor-center pawn: same spot as the host, lifted to drop onto floor.
+        return {X = anchor.X, Y = anchor.Y, Z = anchor.Z + 50}
+    end
+    -- Remaining n-1 pawns in a ring. Radius capped at 80u (≈ half the old 150u)
+    -- so even 12 players stay within a ~160u footprint — comfortably on-tile.
+    local R = math.min(45 + (n - 1) * 4, 80)
+    local theta = (i - 2) * (2 * math.pi / (n - 1))
     return {
         X = anchor.X + math.cos(theta) * R,
         Y = anchor.Y + math.sin(theta) * R,
@@ -835,7 +848,7 @@ end
 local function board_elevator()
     local e, cls = find_elevator()
     if not e then log("[BOARD] No live elevator found - aborting"); return end
-    local target = get_elevator_target(e)
+    local target, box = get_elevator_target(e)
     if not target or not target.Z then
         log("[BOARD] No elevator target pos - aborting"); return
     end
@@ -843,33 +856,46 @@ local function board_elevator()
     local have0 = safe("b_have0", function() return e.PlayersInElevator end)
     log(string.format("[BOARD] '%s' @ (%.0f,%.0f,%.0f) In=%s Need=%s",
         cls, target.X, target.Y, target.Z, tostring(have0), tostring(need)))
-    -- Tight ring INSIDE the box (R below typical half-extent). Capsules
-    -- interpenetrate so physical fit is irrelevant to the count.
+    -- CRITICAL FIX (v2.10): the trigger box is TINY. The 7-player test probe read
+    -- BoxExtent(half)=(32,32,32) -> a 64u cube. The old 120u ring put everyone
+    -- OUTSIDE the box, so CheckForPlayersInElevator() returned FALSE despite a
+    -- stale In=7, AND the wide ring shoved edge players off the platform. Now we
+    -- read the live half-extent and cram everyone WELL INSIDE it. Capsules
+    -- interpenetrate, so stacking near the box center is exactly what registers
+    -- the overlap and is physically safe.
+    local half = safe("b_ext", function() return box and box.BoxExtent end)
+    local hx = (half and half.X) or 32
+    local hy = (half and half.Y) or 32
+    -- Keep the ring radius to ~40% of the smaller half-extent so every capsule
+    -- center sits comfortably inside the trigger volume (min 0 -> pure center).
+    local R = math.max(0, math.min(hx, hy) * 0.4)
     local players = collect_players()
     local n = #players
     local moved = 0
     for i = 1, n do
         local dest
-        if n <= 1 then
-            dest = {X = target.X, Y = target.Y, Z = target.Z + 30}
+        if n <= 1 or R < 1 then
+            dest = {X = target.X, Y = target.Y, Z = target.Z + 10}
         else
             local theta = (i - 1) * (2 * math.pi / n)
             dest = {
-                X = target.X + math.cos(theta) * 120,
-                Y = target.Y + math.sin(theta) * 120,
-                Z = target.Z + 30,
+                X = target.X + math.cos(theta) * R,
+                Y = target.Y + math.sin(theta) * R,
+                Z = target.Z + 10,
             }
         end
         if teleport_pawn(players[i].char, dest, "BOARD" .. i) then
             moved = moved + 1
         end
     end
-    log(string.format("[BOARD] Crammed %d/%d players into the box", moved, n))
+    log(string.format("[BOARD] Crammed %d/%d players into box (R=%.0f, half=%.0f)",
+        moved, n, R, math.min(hx, hy)))
     -- Ask the game's OWN gate to re-evaluate (host-side). NOT a forced start.
-    safe("b_check", function() return e:CheckForPlayersInElevator() end)
+    local rechk = safe("b_check", function() return e:CheckForPlayersInElevator() end)
     local have1 = safe("b_have1", function() return e.PlayersInElevator end)
-    log(string.format("[BOARD] After cram+recheck In=%s (need %s) - watch BET.log "
-        .. "for ProcessServerTravel", tostring(have1), tostring(need)))
+    log(string.format("[BOARD] After cram+recheck In=%s (need %s) Check=%s - watch "
+        .. "BET.log for ProcessServerTravel", tostring(have1), tostring(need),
+        tostring(rechk)))
 end
 
 local probe_bound = false
@@ -1054,32 +1080,19 @@ local function run_monitor()
         spawn_fix_applied = true
     end
 
-    -- Phase 3b: post-travel auto-summon (after Ctrl+H switch OR Ctrl+J reload).
-    -- v2.8 timing fix: the old code summoned a fixed 2 ticks after detect, which the
-    -- 7-player test showed firing BEFORE the host pawn was re-resolved and before
-    -- stuck players had possessed (host-pawn-abort + only 5/7 readable). Now we WAIT
-    -- until BOTH the host pawn resolves AND we can read a reasonable group, retrying up
-    -- to SUMMON_WAIT_TICKS, then summon ONCE. If the window expires we summon with
-    -- whatever resolved (best-effort) so a fully-stuck client doesn't block the rest.
-    if summon_after_travel and level_detected then
-        summon_wait_count = summon_wait_count + 1
-        local host = get_host_pawn()
-        local players = collect_players()
-        local ready = (host ~= nil) and (#players >= 1)
-        if ready then
-            log(string.format("[LEVELSW] Post-travel auto-summon (host ok, %d players, waited %d tick(s))",
-                #players, summon_wait_count))
-            pcall(summon_all_to_host)
-            summon_after_travel = false
-        elseif summon_wait_count >= SUMMON_WAIT_TICKS then
-            log(string.format("[LEVELSW] Post-travel summon window expired (%d ticks); host=%s players=%d — best-effort",
-                summon_wait_count, tostring(host ~= nil), #players))
-            pcall(summon_all_to_host)
-            summon_after_travel = false
-        else
-            log(string.format("[LEVELSW] Waiting to auto-summon (host=%s players=%d, %d/%d)",
-                tostring(host ~= nil), #players, summon_wait_count, SUMMON_WAIT_TICKS))
-        end
+    -- Phase 3b: post-travel auto-summon REMOVED (v2.10).
+    -- The 7-player test proved this was the main thing flinging players off the
+    -- map: it fired DURING the elevator-descent cutscene (host read Z=23120 /
+    -- 21202 mid-drop) and gathered everyone to that mid-air point, and its wide
+    -- ring dropped edge players past the platform (3 players fell to
+    -- Z=-18853/-12257/-19473 on Level 1 right after a post-travel summon).
+    -- Auto-gather can't know when the descent/spawn has actually settled, so it
+    -- is inherently unreliable. Gathering is now MANUAL: press Ctrl+G once the
+    -- group has visibly settled. The settling-gated, outlier-only Phase 3 spawn
+    -- fix above still runs to rescue a genuinely wrong-floor player automatically.
+    if summon_after_travel then
+        summon_after_travel = false  -- consume the flag; do not auto-gather.
+        log("[LEVELSW] Arrived — auto-gather disabled. Press Ctrl+G to gather when settled.")
     end
 
     -- Phase 4: Periodic diagnostics (every 30s = every 3rd tick).

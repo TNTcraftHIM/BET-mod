@@ -2,6 +2,51 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.10-gather-fix (2026-05-31)
+
+### Fix players falling off the map on gather/board + make the Ctrl+K cram actually register
+
+A live 7-player test of v2.9 (UE4SS.log this build) exposed three concrete failures,
+all now diagnosed from the log and fixed:
+
+1. **Auto-summon-on-travel was flinging players into the void — REMOVED.** The Phase 3b
+   post-travel auto-gather fired DURING the elevator-descent cutscene: the host pawn read
+   `Z=23120` / `Z=21202` mid-drop (`[SUMMON] Host @ (-97,20,23120)`), so it gathered the
+   whole group to a mid-air point. Worse, on Level 1 it placed 7 players in a wide ring at
+   `Z=-653`, and 10s later 3 of them had fallen to `Z=-18853 / -12257 / -19473`
+   (`[SPAWN] Outlier ... at Z=-18853`) — the 150u ring reached past the spawn-platform
+   edge and dropped them off-map. Auto-gather can't know when the descent/spawn has
+   settled, so it is inherently unreliable. **Gathering is now MANUAL (Ctrl+G), on the
+   user's timing** — which the user correctly proposed. The settling-gated, outlier-only
+   Phase 3 spawn fix still runs automatically to rescue a genuinely wrong-floor player.
+2. **Gather ring tightened so it can't reach off the platform.** `ring_dest` dropped from a
+   fixed 150u ring to a capped, slowly-growing footprint: first pawn on the anchor, the
+   rest in a ring of radius `min(45 + (n-1)*4, 80)` u — so even 12 players stay within a
+   ~160u footprint, comfortably on one floor tile. Player capsules interpenetrate and the
+   engine nudges them apart (no telefrag death in this game), so a tight cluster is SAFE
+   whereas a wide ring is NOT. Applies to both Ctrl+G summon and the auto spawn-fix.
+3. **Ctrl+K cram now lands INSIDE the trigger box.** The Ctrl+P probe was decisive:
+   `BoxExtent(half)=(32,32,32)` — the elevator `CollisionBox` is only a **64u cube**. The
+   v2.9 cram used a **120u** ring, putting every player OUTSIDE the box, so
+   `CheckForPlayersInElevator()` returned **false** despite a stale `In=7`
+   (`[PROBE] ... In=7 Needed=7` then `Check -> false`), and the wide ring shoved edge
+   players off the platform. v2.10 reads the live `BoxExtent` and crams everyone to a ring
+   of radius `min(halfX,halfY)*0.4` (≈13u for a 32u half-extent) — well inside the volume.
+   Logs `R=` and `half=` and the live `Check=` return so the next test shows whether the
+   overlap finally registers.
+
+Also confirmed working from the same log (kept as-is): the auto spawn-fix correctly
+rescued the wrong-floor player on normal Level-0 entry; Ctrl+H level-switch and Ctrl+J
+reload both travel cleanly; the stale-`In` vs live-`Check` mismatch is exactly the
+geometry bug above, not a replication problem.
+
+STILL UNVERIFIED / not fixed here: the IrisGate stuck-loading race (no Lua-callable entry
+point; reload re-rolls it — see `bet_irisgate_diagnosis`); and whether, once players are
+correctly inside the 64u box, the game's `CheckForPlayersInElevator()` actually fires
+`StartElevator -> ProcessServerTravel` for 7 (the gate operator and the descent/ride
+animation for the 7th remain to be confirmed live). Next test: Ctrl+P to confirm box +
+gate, then a tight Ctrl+K, watch `[BOARD] ... Check=true` + BET.log `ProcessServerTravel`.
+
 ## v2.9-elevator (2026-05-31)
 
 ### 7+ player level transition: cram into the elevator (Ctrl+K) + read-only probe (Ctrl+P)
