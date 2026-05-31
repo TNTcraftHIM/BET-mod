@@ -2,6 +2,47 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.7-levelorder (2026-05-31)
+
+### Level order is NOT numeric — corrected the Ctrl+H test jumper's framing
+
+Investigated the user's concern that a Backrooms game's level order isn't `0→1→2→…`.
+Confirmed from the game's OWN class dump (`ue4ss/CXXHeaderDump/BETGame.hpp`, read-only)
+that **BET has no fixed numeric sequence** — progression is a runtime, branching,
+player-chosen **"ending path"**:
+
+- `ALevelExitBase.NextLevel : TSoftObjectPtr<UBETLevel>` — each level EXIT carries its own
+  pointer to the next-level data asset (a graph edge, not `L_Level_<N+1>`).
+- `UBETGameInstance.GetCachedLevels() : TMap<FGameplayTag, UBETLevel>` — levels keyed by
+  **GameplayTag**, plus `ExpandLevelTree`, `AdvanceLevel`, `BETServerTravel`, `StartLevel`/
+  `EndLevel`.
+- `UBETLevelOptions.Levels : TMap<UBETLevel, float>` — a **weighted pool** of next-level
+  candidates.
+- `UEndingPathBoardWidget.SelectLevel` + `FBETEndingPathData.VisitedLevels` /
+  `UStateTreeTask_SelectLevel` — players literally **pick** their next level on a board;
+  the game records the route per match.
+
+String-extracted from the paks: tags `Level.Neg1/0/1/2/3/4/6/37/232/Fun/Hub/HubPuzzle/Run/
+Menu`; the real `StartLevel` is **Level 0** (the Lobby). Neg1 is a sub-area within a level,
+not "−1 in a line".
+
+Changes in `main.lua`:
+
+- **`LEVEL_MAPS` relabeled as a TEST TRAVERSAL, not canonical order.** Reordered to put
+  **Level 0 first** (the real StartLevel); added the previously-missing entry is N/A (232
+  was already present); list is now 0,1,2,3,4,6,37,232,FUN,Run,Hub,Neg1. All 14 `L_Level_*`
+  map paths re-confirmed present in `pakchunk*-Windows.ucas`.
+- **`LEVEL_GM_BY_INDEX` reordered to stay parallel** with `LEVEL_MAPS` (so "detect current
+  level, step to next" still maps correctly).
+- Extensive in-code comment block documenting the ending-path model and that Ctrl+H is a
+  SPAWN/travel test aid that bypasses the lobby/elevator/ending-path (objectives won't init).
+- No behavior change to the spawn fix or Ctrl+G summon. Full detail in
+  `docs/level_structure.md` (new "Level PROGRESSION model" section).
+
+Deferred: a *faithful* in-game advance (call `AdvanceLevel`/`BETServerTravel(UBETLevel)` or
+drive the ending-path board) and mapping the actual exit→NextLevel graph edges (they live
+in compressed data assets; need FModel/asset parsing). Not required for spawn testing.
+
 ## v2.6-levelswitch (2026-05-31)
 
 ### Test tooling: one-key level switch + clarified summon availability

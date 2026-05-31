@@ -84,3 +84,41 @@ may not use an elevator at all, the elevator is NOT a clean level-independent an
 Recommendation (implemented v2.5): detect misspawns by relative clustering of pawn world
 locations, teleport outliers to the HOST pawn position; provide a host keybind to gather
 all players on demand. No per-level constants, no class-name table, no absolute-Z.
+
+## Level PROGRESSION model — NOT a numeric order (verified 2026-05-31)
+
+Confirmed from the game's own class dump (`BET/Binaries/Win64/ue4ss/CXXHeaderDump/
+BETGame.hpp`) that BET has **no fixed numeric level sequence**. Progression is a
+runtime, branching, player-chosen **"ending path"**:
+
+- `ALevelExitBase.NextLevel : TSoftObjectPtr<UBETLevel>` — each level EXIT actor points
+  to a next-level data asset. The "next level" is a graph edge baked into the exit, not
+  `L_Level_<N+1>`.
+- `UBETGameInstance`: `ExpandLevelTree(out levels)`, `GetCachedLevels() : TMap<
+  FGameplayTag, UBETLevel>` (levels keyed by **GameplayTag**, not index), `AdvanceLevel(
+  level)`, `BETServerTravel(level)`, plus `StartLevel` / `EndLevel` anchors.
+- `UBETLevelOptions.Levels : TMap<UBETLevel, float>` — a **weighted pool** of candidate
+  next levels (random/weighted selection).
+- `UEndingPathBoardWidget.SelectLevel(...)` / `OnLevelSelected`, and
+  `FBETEndingPathData.VisitedLevels` (+ `FBETEndingPathNetState`) — players literally
+  **pick** their next level on a board, and the game records the route taken per match.
+- `UStateTreeTask_SelectLevel` — selection is driven by a StateTree task.
+
+Gameplay tags actually present (string-extracted from `pakchunk*-Windows.ucas`):
+`Level.Neg1, Level.0, Level.1, Level.2, Level.3, Level.4, Level.6, Level.37, Level.232,
+Level.Fun, Level.Hub, Level.HubPuzzle, Level.Run, Level.Menu`. Level data assets seen:
+`DA_Level_0/3/4/37/FUN/Hub/HubPuzzle/Menu` (others compressed). The real `StartLevel` is
+**Level 0** (the Lobby), confirmed by community guides; Neg1 is a sub-area reached within
+a level, not "level −1 in a line".
+
+**Implication for the mod's Ctrl+H jumper:** the old Neg1→0→1→…→Run cycle was an
+ARBITRARY file-order traversal, never the canonical flow. Harmless for a *test* jumper
+(every `L_Level_*` path is a valid, servertravel-reachable map — all 14 confirmed present
+in the ucas), but it does NOT represent how players actually move between levels, and it
+bypasses the lobby start + elevator + ending-path board so OBJECTIVES won't initialize.
+v2.7 relabels the list as a "test traversal" (Level 0 first) and documents this honestly.
+A *faithful* in-game advance would call `AdvanceLevel` / `BETServerTravel(UBETLevel)` with
+the level's data asset, or drive the ending-path board — deferred (not needed for spawn
+testing). The edges themselves (which `NextLevel` each exit points to) live inside
+compressed data assets and can't be read by string extraction — would need FModel/asset
+parsing to map the full graph.

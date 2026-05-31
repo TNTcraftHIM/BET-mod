@@ -279,13 +279,23 @@ local settled_reads = 0
 
 -- v2.6 LEVEL-SWITCH (test tool). BET travels between levels via ProcessServerTravel
 -- (seamless), confirmed in BET.log. We use the same path so all clients are carried
--- along (no drop). Ctrl+H cycles to the next level. Map paths follow the confirmed
--- pattern /Game/Maps/MainLevels/Level_<N>/L_Level_<N> (see docs/level_structure.md).
--- NOTE: jumping straight to a level bypasses the lobby start + elevator progression,
--- so level OBJECTIVES may not init — this is a SPAWN/travel test aid, not normal play.
+-- along (no drop). Ctrl+H steps to the next map in LEVEL_MAPS below.
+--
+-- IMPORTANT (verified 2026-05-31 against the game's own BETGame.hpp class dump):
+-- THIS LIST IS *NOT* THE CANONICAL LEVEL ORDER. BET has no fixed numeric sequence.
+-- Progression is a runtime, branching "ending path": each level EXIT
+-- (ALevelExitBase.NextLevel : UBETLevel) points to a next-level data asset, levels
+-- are keyed by GameplayTag (UBETGameInstance.GetCachedLevels : TMap<FGameplayTag,
+-- UBETLevel>), the candidate set is a WEIGHTED pool (UBETLevelOptions.Levels :
+-- TMap<UBETLevel,float>), and players literally pick their route on the
+-- UEndingPathBoardWidget (SelectLevel / EndingPathData.VisitedLevels). So the real
+-- "next level" is data-driven and player-chosen, not L_Level_<N+1>.
+-- The list below is just a convenient TEST TRAVERSAL (every path is a confirmed-valid
+-- map, ordered Level 0 first = the real StartLevel). Jumping straight to a map also
+-- bypasses the lobby start + elevator + ending-path, so OBJECTIVES may not init.
+-- This is a SPAWN/travel TEST AID only — see docs/level_structure.md.
 local LEVEL_MAPS = {
-    "/Game/Maps/MainLevels/Level_Neg1/L_Level_Neg1",
-    "/Game/Maps/MainLevels/Level_0/L_Level_0",
+    "/Game/Maps/MainLevels/Level_0/L_Level_0",      -- real StartLevel
     "/Game/Maps/MainLevels/Level_1/L_Level_1",
     "/Game/Maps/MainLevels/Level_2/L_Level_2",
     "/Game/Maps/MainLevels/Level_3/L_Level_3",
@@ -294,8 +304,9 @@ local LEVEL_MAPS = {
     "/Game/Maps/MainLevels/Level_37/L_Level_37",
     "/Game/Maps/MainLevels/Level_232/L_Level_232",
     "/Game/Maps/MainLevels/Level_FUN/L_Level_FUN",
-    "/Game/Maps/MainLevels/Level_Hub/L_Level_Hub",
     "/Game/Maps/MainLevels/Level_Run/L_Level_Run",
+    "/Game/Maps/MainLevels/Level_Hub/L_Level_Hub",
+    "/Game/Maps/MainLevels/Level_Neg1/L_Level_Neg1",
 }
 local level_cycle_idx = 0          -- 0 = before first press; advances each Ctrl+H
 local summon_after_travel = false  -- set true on travel so post-load we auto-gather
@@ -572,12 +583,14 @@ end
 
 -- Detect the currently-loaded main level by matching a live GameMode instance
 -- against the per-level gamemode names. Returns the LEVEL_MAPS index or nil.
--- Lets Ctrl+H "cycle from where we are" rather than from a stale counter.
+-- Lets Ctrl+H "step from where we actually are" rather than from a stale counter.
+-- MUST stay parallel (same order) with LEVEL_MAPS above. Gamemode class names
+-- confirmed from BETGame.hpp / docs/level_structure.md.
 local LEVEL_GM_BY_INDEX = {
-    "BP_LevelNeg1GameMode_C", "BP_Level0GameMode_C", "BP_Level1_GameMode_C",
-    "BP_Level2GameMode_C", "BP_Level3GameMode_C", "BP_Level4GameMode_C",
-    "BP_Level6GameMode_C", "BP_Level37GameMode_C", "BP_Level232GameMode_C",
-    "BP_LevelFUNGameMode_C", "BP_LevelHubGameMode_C", "BP_LevelRunGameMode_C",
+    "BP_Level0GameMode_C", "BP_Level1_GameMode_C", "BP_Level2GameMode_C",
+    "BP_Level3GameMode_C", "BP_Level4GameMode_C", "BP_Level6GameMode_C",
+    "BP_Level37GameMode_C", "BP_Level232GameMode_C", "BP_LevelFUNGameMode_C",
+    "BP_LevelRunGameMode_C", "BP_LevelHubGameMode_C", "BP_LevelNeg1GameMode_C",
 }
 local function detect_current_level_idx()
     for i, gm in ipairs(LEVEL_GM_BY_INDEX) do
