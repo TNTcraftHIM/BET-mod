@@ -1,6 +1,12 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.4-cluster-fix"
+local VERSION = "2.5-host-anchor"
+
+-- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
+-- resolution and GameState-based player enumeration (level-independent).
+local UEHelpers = nil
+pcall(function() UEHelpers = require("UEHelpers") end)
+
 
 local function log(msg)
     print(string.format("[%s] %s", MOD_NAME, msg))
@@ -412,8 +418,137 @@ local function collect_players()
     return out
 end
 
--- RELATIVE cluster-outlier teleport. Target = the MAJORITY cluster's median
--- runtime position (NOT a PlayerStart constant — runtime frame differs by ~+8500).
+---------------------------------------------------------------------------
+-- HOST ANCHOR + SHARED TELEPORT (v2.5)
+-- Level-INDEPENDENT: the host (listen-server authority) always spawns with
+-- the group on any level, standing in valid walkable geometry. Their live
+-- runtime position is the gather target — no per-level coords, no PlayerStart
+-- frame offset. Confirmed primitives on THIS build: K2_GetActorLocation reads,
+-- K2_SetActorLocation writes+replicates to remote clients (v2.4 live test),
+-- RegisterKeyBind + K2_SetActorLocationAndRotation (shipped SplitScreenMod).
+---------------------------------------------------------------------------
+
+-- Resolve the host pawn (local PlayerController's Pawn). Re-resolve every time
+-- (pawns are recreated across travel/respawn — never cache).
+local function get_host_pawn()
+    if not UEHelpers then return nil end
+    local pc = safe("HostPC", function() return UEHelpers.GetPlayerController() end)
+    if not pc or not is_real_instance(pc) then return nil end
+    local pawn = safe("HostPawn", function()
+        local p = pc.Pawn
+        if p and p:IsValid() then return p end
+        return nil
+    end)
+    return pawn
+end
+
+-- Teleport one pawn to dest with a ring offset. Uses bTeleport=TRUE so the
+-- client SNAPS (no interpolation/sweep). Verifies the move by re-reading pos.
+-- Returns true if the pawn ended up near dest.
+local function teleport_pawn(pawn, dest, label)
+    -- Discontinuous move: bSweep=false, bTeleport=true (the 4th/last arg).
+    local ok = safe(label .. "_SAL", function()
+        pawn:K2_SetActorLocation({X = dest.X, Y = dest.Y, Z = dest.Z}, false, {}, true)
+        return true
+    end)
+    if not ok then
+        ok = safe(label .. "_TTO", function()
+            pawn:K2_TeleportTo({X = dest.X, Y = dest.Y, Z = dest.Z},
+                {Pitch = 0, Yaw = 0, Roll = 0})
+            return true
+        end)
+    end
+    safe(label .. "_FNU", function() pawn:ForceNetUpdate() return true end)
+    local after = get_actor_pos(pawn, label .. "_chk")
+    if after and after.Z
+        and math.abs(after.X - dest.X) <= 400
+        and math.abs(after.Y - dest.Y) <= 400
+        and math.abs(after.Z - dest.Z) <= CLUSTER_GAP then
+        return true, after
+    end
+    return false, after
+end
+
+-- Ring offset around an anchor so N pawns don't stack on one point (telefrag).
+local function ring_dest(anchor, i, n)
+    if n <= 1 then
+        return {X = anchor.X, Y = anchor.Y, Z = anchor.Z + 50}
+    end
+    local R = 150
+    local theta = (i - 1) * (2 * math.pi / n)
+    return {
+        X = anchor.X + math.cos(theta) * R,
+        Y = anchor.Y + math.sin(theta) * R,
+        Z = anchor.Z + 50,
+    }
+end
+
+-- HOST "SUMMON ALL": gather every OTHER possessed player to the host pawn.
+-- Manual, host-only (only the host runs this mod), one-shot per press. This is
+-- the level-independent escape hatch for ANY separation, not just Z-axis.
+local function summon_all_to_host()
+    local host = get_host_pawn()
+    if not host then
+        log("[SUMMON] Could not resolve host pawn — aborting")
+        return
+    end
+    local anchor = get_actor_pos(host, "SummonAnchor")
+    if not anchor or not anchor.Z then
+        log("[SUMMON] Could not read host position — aborting")
+        return
+    end
+
+    local players = collect_players()
+    -- Exclude the host pawn itself from the move list.
+    local others = {}
+    for i = 1, #players do
+        if players[i].char ~= host then others[#others + 1] = players[i] end
+    end
+    local n = #others
+    log(string.format("[SUMMON] Host @ (%.0f,%.0f,%.0f); gathering %d players",
+        anchor.X, anchor.Y, anchor.Z, n))
+    if n == 0 then return end
+
+    local moved = 0
+    for i = 1, n do
+        local p = others[i]
+        local dest = ring_dest(anchor, i, n)
+        local ok, after = teleport_pawn(p.char, dest, "SUM" .. i)
+        local az = (after and after.Z) or -999999
+        if ok then
+            moved = moved + 1
+            log(string.format("[SUMMON] OK '%s' Z=%.0f -> %.0f (verified)",
+                p.name, p.Z, az))
+        else
+            log(string.format("[SUMMON] FAILED/UNVERIFIED '%s' now Z=%.0f", p.name, az))
+        end
+    end
+    log(string.format("[SUMMON] Done: %d/%d moved", moved, n))
+end
+
+-- Register the host summon keybind (Ctrl+G). Guarded: RegisterKeyBind support
+-- is verified on this build (SplitScreenMod uses it). Runs work in game thread.
+local summon_bound = false
+local function ensure_summon_keybind()
+    if summon_bound then return end
+    local ok = pcall(function()
+        RegisterKeyBind(Key.G, {ModifierKey.CONTROL}, function()
+            ExecuteInGameThread(function()
+                pcall(summon_all_to_host)
+            end)
+        end)
+    end)
+    if ok then
+        summon_bound = true
+        log("[SUMMON] Host keybind registered: Ctrl+G = gather all players to host")
+    else
+        log("[SUMMON] RegisterKeyBind failed — summon keybind unavailable")
+    end
+end
+
+-- RELATIVE cluster-outlier teleport. Target = the HOST pawn's live position
+-- (level-independent), falling back to the majority-cluster median only if the
+-- host can't be resolved or the host is itself the outlier.
 local function try_spawn_fix()
     if spawn_fix_applied then return end
 
@@ -464,43 +599,42 @@ local function try_spawn_fix()
         return
     end
 
-    -- Cluster median XY/Z = the teleport target (same frame as the players).
+    -- TARGET = host pawn's live position (level-independent). Fall back to the
+    -- cluster median only if the host can't be resolved OR the host is itself an
+    -- outlier (don't gather everyone onto a misplaced host).
     local cxs, cys, czs = {}, {}, {}
     for i = 1, #cluster do
         cxs[i] = cluster[i].X; cys[i] = cluster[i].Y; czs[i] = cluster[i].Z
     end
     local tx, ty, tz = median(cxs), median(cys), median(czs)
-    log(string.format("[SPAWN] Cluster=%d @ (%.0f,%.0f,%.0f); outliers=%d",
-        #cluster, tx, ty, tz, #outliers))
+    local anchor_src = "cluster-median"
+
+    local host = get_host_pawn()
+    if host then
+        local hloc = get_actor_pos(host, "HostAnchor")
+        if hloc and hloc.Z and math.abs(hloc.Z - med) <= CLUSTER_GAP then
+            -- host is in the majority -> trust it as the anchor
+            tx, ty, tz = hloc.X, hloc.Y, hloc.Z
+            anchor_src = "host-pawn"
+        end
+    end
+    local anchor = {X = tx, Y = ty, Z = tz}
+    log(string.format("[SPAWN] Anchor(%s)=(%.0f,%.0f,%.0f); cluster=%d outliers=%d",
+        anchor_src, tx, ty, tz, #cluster, #outliers))
 
     local fixed = 0
     for i = 1, #outliers do
         local o = outliers[i]
-        -- small spread so multiple outliers don't stack on one point
-        local ox = tx + ((i - 1) % 3) * TP_XY_SPREAD
-        local oy = ty + math.floor((i - 1) / 3) * TP_XY_SPREAD
-        log(string.format("[SPAWN] Outlier '%s' at Z=%.0f -> target (%.0f,%.0f,%.0f)",
-            o.name, o.Z, ox, oy, tz))
-        local ok = safe("TP_" .. i, function()
-            o.char:K2_SetActorLocation({X = ox, Y = oy, Z = tz}, false, {}, false)
-            return true
-        end)
-        if not ok then
-            ok = safe("TP2_" .. i, function()
-                o.char:K2_TeleportTo({X = ox, Y = oy, Z = tz},
-                    {Pitch = 0, Yaw = 0, Roll = 0})
-                return true
-            end)
-        end
-        -- Verify the write actually moved the actor (writes historically unverified)
-        local after = get_actor_pos(o.char, "TPchk" .. i)
-        if after and after.Z and math.abs(after.Z - tz) <= CLUSTER_GAP then
+        local dest = ring_dest(anchor, i, #outliers)
+        log(string.format("[SPAWN] Outlier '%s' at Z=%.0f -> (%.0f,%.0f,%.0f)",
+            o.name, o.Z, dest.X, dest.Y, dest.Z))
+        local ok, after = teleport_pawn(o.char, dest, "SF" .. i)
+        local az = (after and after.Z) or -999999
+        if ok then
             fixed = fixed + 1
-            log(string.format("[SPAWN] OK '%s' now Z=%.0f (verified)", o.name, after.Z))
+            log(string.format("[SPAWN] OK '%s' now Z=%.0f (verified)", o.name, az))
         else
-            local az = (after and after.Z) or -999999
-            log(string.format("[SPAWN] WRITE FAILED/UNVERIFIED '%s' Z=%.0f (apply=%s)",
-                o.name, az, tostring(ok)))
+            log(string.format("[SPAWN] WRITE FAILED/UNVERIFIED '%s' Z=%.0f", o.name, az))
         end
     end
 
@@ -527,6 +661,8 @@ local function run_monitor()
             level_detected = true
             level_detect_time = diag_tick
             log("[DIAG] Game level detected via " .. tostring(via) .. " at tick " .. diag_tick)
+            -- Register the host summon keybind now that we're in a real level.
+            ensure_summon_keybind()
         else
             return
         end
@@ -589,3 +725,5 @@ end)
 
 log("init complete - adaptive v" .. VERSION)
 log("[ADAPT] Position detection: will try 5 methods (GetActorLocation, K2_GetActorLocation, RootComponent.RelativeLocation, RootComponent.XYZ, GetTransform)")
+log("[SUMMON] Host keybind Ctrl+G (gather all players to host) will arm once in a real level")
+log("[ADAPT] UEHelpers " .. (UEHelpers and "loaded" or "NOT FOUND — host-anchor disabled, will use cluster median"))

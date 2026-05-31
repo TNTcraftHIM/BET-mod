@@ -2,6 +2,51 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.5-host-anchor (2026-05-31)
+
+### Level-INDEPENDENT spawn gathering: host anchor + host summon keybind
+
+v2.4's cluster-fix was confirmed working in a live 7-player test (the wrong-floor
+player was teleported up to the group, verified). But Z-axis clustering is specific
+to level-0 geometry — later levels may not separate floors by Z. This release makes
+the system level-independent. Design backed by multi-agent research (REPO `/sa`,
+Lethal Company, Content Warning all use the same pattern) and confirmed against the
+shipped `SplitScreenMod` on this exact build (it uses `RegisterKeyBind` + pawn teleport).
+
+Changes in `main.lua`:
+
+- **Anchor switched from cluster median to the HOST pawn's live position.** The host
+  is the listen-server authority and always spawns with the group on any level,
+  standing in valid walkable geometry — a level-independent gather target with no
+  coordinate assumptions. Resolved via `UEHelpers.GetPlayerController().Pawn`,
+  re-read every time (never cached; pawns are recreated across travel).
+- **Host-is-outlier fallback**: if the host pawn isn't in the majority cluster (or
+  can't be resolved / UEHelpers missing), fall back to the cluster median so we never
+  gather everyone onto a misplaced host.
+- **New host "Summon All" keybind: Ctrl+G.** Manual, host-only (only the host runs the
+  mod), one-shot per press. Gathers every other possessed player to the host in a ring.
+  This is the escape hatch for ANY separation on ANY future level, independent of
+  whether auto-clustering classifies correctly. Registered once a real level is detected.
+- **Fixed the teleport flag**: writes now use `bTeleport=true` (`K2_SetActorLocation(...,
+  true)` / `K2_TeleportTo`) so clients SNAP instead of interpolating/sweeping across the
+  map. v2.4 incorrectly used `bTeleport=false`.
+- **Ring spread + `+50` Z lift**: outliers/summoned players fan out in a 150u ring around
+  the anchor and are lifted slightly so they settle onto the floor instead of stacking
+  (telefrag) or clipping into geometry. Replaces the old grid offset.
+- **`ForceNetUpdate()`** after each teleport to push the corrected position to clients.
+- Shared `teleport_pawn()` / `ring_dest()` used by both the auto-fix and the keybind.
+- Collision-toggle (`SetActorEnableCollision`) deliberately NOT used — unverified on this
+  build and the ring+lift avoids stacking without it. Documented as a last-resort fallback.
+
+Confirmed primitives on this build (so the design rests on observed facts, not theory):
+- `K2_GetActorLocation` reads in-level — confirmed v2.4 test.
+- `K2_SetActorLocation` writes AND replicates to remote clients — confirmed v2.4 test
+  (the wrong-floor player was actually moved and the move verified).
+- `RegisterKeyBind` + modifier + pawn teleport — confirmed by shipped `SplitScreenMod`.
+
+Still unverified (next live test must confirm): the Ctrl+G keybind firing in-game, and
+that summoned remote clients visually snap cleanly. Watch `[SUMMON]` and `[SPAWN]` lines.
+
 ## v2.4-cluster-fix (2026-05-31)
 
 ### Spawn fix: RE-ENABLED with relative cluster-outlier detection
