@@ -2,6 +2,57 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.9-elevator (2026-05-31)
+
+### 7+ player level transition: cram into the elevator (Ctrl+K) + read-only probe (Ctrl+P)
+
+Overturns the long-standing assumption that "the elevator physically can't hold >6, so
+extra players must suicide before a transition." A multi-agent investigation of the game's
+own class dump (`BETGame.hpp`), with adversarial verification of every decisive
+replication/authority claim (14 confirmed / 12 refuted / 6 uncertain), established:
+
+- **The elevator gate is a COUNT check, not a physical-capacity limit.** `AElevator_Base`
+  has a single `UBoxComponent CollisionBox` (trigger), `int PlayersInElevator`,
+  `int PlayersNeededToStartElevator`, and the predicate `CheckForPlayersInElevator()`.
+- **A `UBoxComponent` is an overlap volume, not a blocker** — player capsules interpenetrate,
+  so any number of pawns can register inside one box regardless of how crowded it looks.
+  Physical fit and the count are **decoupled**. No need to disable collision or make anyone
+  die: just put everyone in the box and let the game's own authoritative code run
+  `StartElevator -> move -> ServerTravel` (which inherently carries all clients), exactly as
+  it already does for ≤6.
+
+**Approach chosen — Plan 1 "cram", host-only.** It changes only WHO stands in the trigger
+box, reusing ONLY the already-verified position-replicating teleport (`K2_SetActorLocation`
++ `ForceNetUpdate`). It makes NO new replication/authority assumptions — all the
+authority/travel work is delegated to the game's own code. **Plan 2 (host writes
+`PlayersInElevator` / directly calls `StartElevator`) was REFUTED as unsafe** (the counter
+is recomputed+overwritten by the predicate and has no `OnRep`; a server writing a replicated
+prop doesn't fire its own `OnRep`; `StartElevator` authority/sequencing is unverified and
+calling it out of sequence may skip the travel wiring). We do NOT force it.
+
+Changes in `main.lua`:
+
+- **New host keybind Ctrl+P = READ-ONLY elevator probe.** Resolves the live elevator
+  (`find_elevator` over base + per-level + BP class names, CDO-safe), logs the real
+  `PlayersInElevator`/`PlayersNeededToStartElevator`, the `CollisionBox` world pos +
+  half-extents, and the (read-only) `CheckForPlayersInElevator()` return. Run this FIRST to
+  confirm the count-gate model and the live threshold before cramming. Zero side effects.
+- **New host keybind Ctrl+K = cram all players into the elevator.** Teleports every possessed
+  player (incl. host) into a tight 120u ring inside the `CollisionBox`, then calls the game's
+  own `CheckForPlayersInElevator()` to let it re-evaluate — never forces `StartElevator`,
+  never writes the counter. Logs before/after counts.
+- Trigger target is read from the LIVE `CollisionBox` world position (with actor-origin
+  fallback) — no per-level constants, level-independent.
+- No change to the spawn fix, summon, level-switch, or reload behavior.
+
+Still UNVERIFIED (next live test must confirm): the gate comparison operator (`>=` vs `==`)
+and the live `PlayersNeededToStartElevator` value; the box extents; whether a host-side
+`CheckForPlayersInElevator()` call is side-effect-free; and the `OnMoveComplete -> travel`
+wiring actually firing. Test order: **Ctrl+P first** (read the gate), then a 7-player
+**Ctrl+K** with objectives completed. Watch UE4SS.log `[PROBE]`/`[BOARD]` lines and BET.log
+for `ProcessServerTravel` + all 7 controllers re-appearing on the destination map. See
+`bet_elevator_capacity_issue` memory.
+
 ## v2.8-reload (2026-05-31)
 
 ### Ctrl+J = reload current level (un-stick loading) + fixed post-travel summon timing

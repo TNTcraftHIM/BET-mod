@@ -1,6 +1,6 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.8-reload"
+local VERSION = "2.9-elevator"
 
 -- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
 -- resolution and GameState-based player enumeration (level-independent).
@@ -744,6 +744,166 @@ local function ensure_reload_keybind()
     end
 end
 
+---------------------------------------------------------------------------
+-- ELEVATOR BOARDING (v2.9) -- let 7+ players advance to the next level.
+--
+-- KEY INSIGHT (verified from BETGame.hpp + adversarial multi-agent review,
+-- 2026-05-31): the elevator gate is a COUNT check, NOT a physical-capacity
+-- limit. AElevator_Base has a single UBoxComponent trigger (CollisionBox), an
+-- int PlayersInElevator, an int PlayersNeededToStartElevator, and the predicate
+-- CheckForPlayersInElevator(). A UBoxComponent is an OVERLAP volume, not a
+-- blocker -- capsules interpenetrate, so ANY number of pawns can register inside
+-- it regardless of how crowded it looks. Physical fit and the count are
+-- DECOUPLED. So we do NOT need to disable collision or make anyone suicide:
+-- teleport every player into the box and let the game's OWN authoritative code
+-- (host = listen-server) run StartElevator -> move -> ServerTravel, exactly as
+-- it already does for <=6. Reuses ONLY the verified position-replicating
+-- teleport; makes NO new replication/authority assumptions. Plan 2 (host writes
+-- PlayersInElevator / forces StartElevator) was REFUTED unsafe and is NOT done.
+---------------------------------------------------------------------------
+
+-- Live elevators are BP subclasses of A(Level*)Elevator : AElevator_Base.
+local ELEVATOR_CLASS_NAMES = {
+    "Elevator_Base", "Level0Elevator", "Level2Elevator", "Level4_Elevator",
+    "BP_ElevatorFinal_C", "BP_ElevatorFinal_Level2_C", "BP_Elevator_Level4_C",
+}
+local function find_elevator()
+    for _, n in ipairs(ELEVATOR_CLASS_NAMES) do
+        local e = find_first_instance(n)
+        if e then return e, n end
+    end
+    return nil
+end
+
+-- Read a component's world position (fallback to component-space).
+local function get_component_pos(comp, label)
+    local loc = safe(label .. "_KGCL", function()
+        return comp:K2_GetComponentLocation()
+    end)
+    if loc and loc.Z then return loc end
+    loc = safe(label .. "_RL", function() return comp.RelativeLocation end)
+    if loc and loc.Z then return loc end
+    return nil
+end
+
+local function get_elevator_target(elevator)
+    local box = safe("ElevBox", function()
+        local b = elevator.CollisionBox
+        if b and b:IsValid() then return b end
+        return nil
+    end)
+    if box then
+        local p = get_component_pos(box, "ElevBox")
+        if p and p.Z then return p, box end
+    end
+    return get_actor_pos(elevator, "ElevActor"), box
+end
+
+-- Ctrl+P: READ-ONLY probe. Logs the live elevator's real gate values + box
+-- geometry so we confirm the count-gate model BEFORE cramming. No side effects
+-- beyond the (read-only) predicate call.
+local function probe_elevator()
+    local e, cls = find_elevator()
+    if not e then log("[PROBE] No live elevator found"); return end
+    local need = safe("p_need", function() return e.PlayersNeededToStartElevator end)
+    local have = safe("p_have", function() return e.PlayersInElevator end)
+    log(string.format("[PROBE] Elevator '%s'  In=%s  Needed=%s",
+        cls, tostring(have), tostring(need)))
+    local box = safe("p_box", function()
+        local b = e.CollisionBox
+        if b and b:IsValid() then return b end
+        return nil
+    end)
+    if box then
+        local wl = get_component_pos(box, "p_boxpos")
+        local ext = safe("p_ext", function() return box.BoxExtent end)
+        if wl then log(string.format("[PROBE] BoxWorld=(%.0f,%.0f,%.0f)",
+            wl.X, wl.Y, wl.Z)) end
+        if ext and ext.X then log(string.format(
+            "[PROBE] BoxExtent(half)=(%.0f,%.0f,%.0f)", ext.X, ext.Y, ext.Z)) end
+    else
+        log("[PROBE] CollisionBox not readable")
+    end
+    local r = safe("p_check", function() return e:CheckForPlayersInElevator() end)
+    log("[PROBE] CheckForPlayersInElevator() -> " .. tostring(r)
+        .. " ; possessed=" .. tostring(#collect_players()))
+end
+
+-- Ctrl+K: cram EVERY possessed player (incl. host) into the elevator trigger box
+-- in a tight ring, then ask the game's own gate to re-evaluate. Never forces
+-- StartElevator or writes the counter -- the game's authoritative code decides.
+local function board_elevator()
+    local e, cls = find_elevator()
+    if not e then log("[BOARD] No live elevator found - aborting"); return end
+    local target = get_elevator_target(e)
+    if not target or not target.Z then
+        log("[BOARD] No elevator target pos - aborting"); return
+    end
+    local need = safe("b_need", function() return e.PlayersNeededToStartElevator end)
+    local have0 = safe("b_have0", function() return e.PlayersInElevator end)
+    log(string.format("[BOARD] '%s' @ (%.0f,%.0f,%.0f) In=%s Need=%s",
+        cls, target.X, target.Y, target.Z, tostring(have0), tostring(need)))
+    -- Tight ring INSIDE the box (R below typical half-extent). Capsules
+    -- interpenetrate so physical fit is irrelevant to the count.
+    local players = collect_players()
+    local n = #players
+    local moved = 0
+    for i = 1, n do
+        local dest
+        if n <= 1 then
+            dest = {X = target.X, Y = target.Y, Z = target.Z + 30}
+        else
+            local theta = (i - 1) * (2 * math.pi / n)
+            dest = {
+                X = target.X + math.cos(theta) * 120,
+                Y = target.Y + math.sin(theta) * 120,
+                Z = target.Z + 30,
+            }
+        end
+        if teleport_pawn(players[i].char, dest, "BOARD" .. i) then
+            moved = moved + 1
+        end
+    end
+    log(string.format("[BOARD] Crammed %d/%d players into the box", moved, n))
+    -- Ask the game's OWN gate to re-evaluate (host-side). NOT a forced start.
+    safe("b_check", function() return e:CheckForPlayersInElevator() end)
+    local have1 = safe("b_have1", function() return e.PlayersInElevator end)
+    log(string.format("[BOARD] After cram+recheck In=%s (need %s) - watch BET.log "
+        .. "for ProcessServerTravel", tostring(have1), tostring(need)))
+end
+
+local probe_bound = false
+local function ensure_probe_keybind()
+    if probe_bound then return end
+    local ok = pcall(function()
+        RegisterKeyBind(Key.P, {ModifierKey.CONTROL}, function()
+            ExecuteInGameThread(function() pcall(probe_elevator) end)
+        end)
+    end)
+    if ok then
+        probe_bound = true
+        log("[PROBE] Host keybind registered: Ctrl+P = read elevator gate (probe)")
+    else
+        log("[PROBE] RegisterKeyBind failed — probe keybind unavailable")
+    end
+end
+
+local board_bound = false
+local function ensure_board_keybind()
+    if board_bound then return end
+    local ok = pcall(function()
+        RegisterKeyBind(Key.K, {ModifierKey.CONTROL}, function()
+            ExecuteInGameThread(function() pcall(board_elevator) end)
+        end)
+    end)
+    if ok then
+        board_bound = true
+        log("[BOARD] Host keybind registered: Ctrl+K = cram all players into elevator")
+    else
+        log("[BOARD] RegisterKeyBind failed — board keybind unavailable")
+    end
+end
+
 -- RELATIVE cluster-outlier teleport. Target = the HOST pawn's live position
 -- (level-independent), falling back to the majority-cluster median only if the
 -- host can't be resolved or the host is itself the outlier.
@@ -863,6 +1023,8 @@ local function run_monitor()
             ensure_summon_keybind()
             ensure_levelsw_keybind()
             ensure_reload_keybind()
+            ensure_probe_keybind()
+            ensure_board_keybind()
         else
             return
         end
@@ -956,4 +1118,6 @@ log("[ADAPT] Position detection: will try 5 methods (GetActorLocation, K2_GetAct
 log("[SUMMON] Host keybind Ctrl+G (gather all players to host) will arm once in a real level")
 log("[LEVELSW] Host keybind Ctrl+H (cycle to next level, TEST tool) will arm once in a real level")
 log("[RELOAD] Host keybind Ctrl+J (reload current level, un-stick loading) will arm once in a real level")
+log("[PROBE] Host keybind Ctrl+P (read elevator gate, READ-ONLY probe) will arm once in a real level")
+log("[BOARD] Host keybind Ctrl+K (cram all players into elevator) will arm once in a real level")
 log("[ADAPT] UEHelpers " .. (UEHelpers and "loaded" or "NOT FOUND — host-anchor disabled, will use cluster median"))
