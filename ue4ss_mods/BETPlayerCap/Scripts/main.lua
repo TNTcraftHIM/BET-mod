@@ -1,6 +1,6 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.10-gather-fix"
+local VERSION = "2.11-host-exclude"
 
 -- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
 -- resolution and GameState-based player enumeration (level-independent).
@@ -487,6 +487,25 @@ local function get_host_pawn()
     return pawn
 end
 
+-- Robust UObject identity. UE4SS wraps each access in a NEW Lua object, so the
+-- SAME actor obtained two different ways (get_host_pawn() vs FindAllOf) compares
+-- UNEQUAL under '~='. The 7-player log proved this: Ctrl+G "gathered 6 players"
+-- with 6 possessed and moved the host itself (Host Z=63 -> first move Z=63->113),
+-- because `char ~= host` never matched. Compare the underlying address instead
+-- (GetFullName fallback if GetAddress is unavailable on this build).
+local function actor_id(a)
+    if not a then return nil end
+    local addr = safe("aid_addr", function() return a:GetAddress() end)
+    if addr then return addr end
+    return safe("aid_name", function() return a:GetFullName() end)
+end
+local function same_actor(a, b)
+    if a == b then return true end
+    local ia, ib = actor_id(a), actor_id(b)
+    if ia and ib then return ia == ib end
+    return false
+end
+
 -- Teleport one pawn to dest with a ring offset. Uses bTeleport=TRUE so the
 -- client SNAPS (no interpolation/sweep). Verifies the move by re-reading pos.
 -- Returns true if the pawn ended up near dest.
@@ -557,14 +576,22 @@ local function summon_all_to_host()
     end
 
     local players = collect_players()
-    -- Exclude the host pawn itself from the move list.
+    -- Exclude the host pawn itself from the move list. MUST use address identity:
+    -- '~=' on UE4SS wrappers fails (see same_actor) and the host would teleport
+    -- itself, appearing to "lag" to where it stood a tick ago.
     local others = {}
+    local host_in_list = false
     for i = 1, #players do
-        if players[i].char ~= host then others[#others + 1] = players[i] end
+        if same_actor(players[i].char, host) then
+            host_in_list = true
+        else
+            others[#others + 1] = players[i]
+        end
     end
     local n = #others
-    log(string.format("[SUMMON] Host @ (%.0f,%.0f,%.0f); gathering %d players",
-        anchor.X, anchor.Y, anchor.Z, n))
+    log(string.format("[SUMMON] Host @ (%.0f,%.0f,%.0f); gathering %d players%s",
+        anchor.X, anchor.Y, anchor.Z, n,
+        host_in_list and "" or " (warn: host not in possessed list)"))
     if n == 0 then return end
 
     local moved = 0

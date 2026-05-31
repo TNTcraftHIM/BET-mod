@@ -2,6 +2,39 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.11-host-exclude (2026-05-31)
+
+### Fix: Ctrl+G "Summon All" was teleporting the HOST too (UObject identity bug)
+
+User report: pressing Ctrl+G doesn't leave the host in place — the host also snaps to
+a spot that feels random or "a few seconds delayed" (where the host stood a moment ago).
+
+**Root cause (confirmed in the v2.9 UE4SS.log):** the summon excluded the host with
+`players[i].char ~= host`. UE4SS wraps every object access in a NEW Lua userdata, so the
+SAME pawn obtained two different ways — `get_host_pawn()` (PlayerController.Pawn) vs
+`FindAllOf(character)` — compares **unequal** under `~=`. So the host was never removed
+from the move list: it logged `gathering 6 players` with 6 possessed and moved the host
+itself (`[SUMMON] Host @ (1239,-60,63)` then the first move `Z=63 -> 113`). The host got a
+ring slot (`anchor + XY offset, +50 Z`) instead of staying put; because the anchor is
+sampled a tick before the snap applies while the host is usually walking, it looks like
+the host jumps **backward** to its position a moment ago — exactly the "延迟/随机" feel.
+
+Fix in `main.lua`:
+
+- **New `actor_id()` / `same_actor()` helpers** — compare UObjects by underlying address
+  (`GetAddress`, `GetFullName` fallback) instead of wrapper-identity `~=`. This is the
+  correct way to test "is this the same actor" on this UE4SS build.
+- **Summon exclusion now uses `same_actor(char, host)`** so the host is genuinely dropped
+  from the gather list and stays exactly where it is. Logs a warning if the host isn't
+  found in the possessed list (so a future regression is visible).
+- No other behavior change. The spawn-fix host-anchor path already used a Z-distance test
+  (not `~=`), so it was unaffected.
+
+With v2.10 (tight gather, no auto-summon, box-sized cram) + v2.11 (host stays put), the
+gather/board behavior is considered DONE pending a final confirm. The only remaining known
+issue is the game-native IrisGate stuck-loading race on rapid travel (no Lua-callable fix;
+mitigate with Ctrl+J reload) — see `bet_irisgate_diagnosis`.
+
 ## v2.10-gather-fix (2026-05-31)
 
 ### Fix players falling off the map on gather/board + make the Ctrl+K cram actually register
