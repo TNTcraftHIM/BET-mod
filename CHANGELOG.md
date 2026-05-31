@@ -2,6 +2,27 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.12.0 — release prep (2026-05-31)
+
+First packaged release. No gameplay/logic change to the mod from v2.12-rebind;
+this pass makes the repo installable by someone other than the author.
+
+- **One-command installer** (`tools/install_ue4ss_mod.py` rewritten). `install` now:
+  verifies the game + base UE4SS are present (refuses with a clear message if not),
+  copies the mod, **enables it in `ue4ss/Mods/mods.txt`**, and **installs the
+  anti-lag `Engine.ini`** into the user config dir (backing up any existing one).
+  `uninstall` reverses all three (removes the mod, disables the mods.txt line,
+  restores/removes Engine.ini from backup). Verified idempotent against the live
+  install. Supports `--game-root` for non-default install paths.
+- **README rewritten** from an "investigation workspace" doc into a real release
+  README: requirements, keybind table, install/uninstall, UE4SS prerequisite,
+  anti-lag explanation, known issues, and repo layout.
+- **Mod metadata updated**: `enabled.txt` version `0.1.0` → `2.12.0` with an
+  accurate description; mod-folder `README.md` rewritten to describe actual
+  features + keybinds.
+- **Cleanup**: removed the stray `ue4ss_mods/BETPlayerCap/mods.txt` from source
+  (UE4SS generates that listing in the live folder; it doesn't belong in the mod).
+
 ## v2.12-rebind (2026-05-31)
 
 ### Remap keybinds to reduce mis-presses (user request, mid-playtest)

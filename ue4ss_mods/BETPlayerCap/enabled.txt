@@ -1,6 +1,6 @@
 return {
     name = "BETPlayerCap",
-    version = "0.1.0",
-    description = "Logging-first player cap investigation mod for Backrooms Escape Together",
+    version = "2.12.0",
+    description = "Raise the player cap above 6 for Backrooms Escape Together, with host tools to gather players, switch levels, reload a stuck level, and board the elevator for 7+ player transitions.",
     author = "TNTcraft + Claude",
 }

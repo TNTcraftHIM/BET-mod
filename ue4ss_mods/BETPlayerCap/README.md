@@ -1,42 +1,48 @@
-# UE4SS BETPlayerCap
+# BETPlayerCap (UE4SS Lua mod)
 
-Logging-first UE4SS mod skeleton for Backrooms Escape Together.
+Raises the player cap above the default 6 in **Backrooms Escape Together**, and
+adds host-only tools to keep a 7+ player session working (gather, level switch,
+reload a stuck level, and board the elevator for level transitions).
 
-## Intended target
+The mod runs **only on the host** (the listen-server authority). Clients do not
+need it installed — they just join the host's lobby.
 
-Install UE4SS against:
+## What it does
 
-`F:\Steam\steamapps\common\Backrooms_Escape_Together\BET\Binaries\Win64\BETGameSteam-Win64-Shipping.exe`
+- **Raises the multiplayer player-count cap** (target 12) via the settings widget
+  defaults, so the host can create a lobby for more than 6.
+- **Auto spawn-fix** on normal level entry: if a player spawns on the wrong floor
+  (an outlier far from the group), they are teleported to the group. Settling-gated
+  so it never fires mid-elevator-descent, and outlier-only so it never rubber-bands
+  someone who walks off on purpose.
 
-This folder is source material for the mod. Copy or symlink `BETPlayerCap` into the UE4SS `Mods` directory only after UE4SS is installed and basic launch stability is verified.
+## Host keybinds
 
-## First objective
+| Key | Action |
+|-----|--------|
+| **Ctrl+G** | Gather all players to the host (manual, anytime) |
+| **Ctrl+J** | Reload the current level (un-stick a player stuck on loading) |
+| **Ctrl+K** | Switch to the previous level *(test tool)* |
+| **Ctrl+L** | Switch to the next level *(test tool)* |
+| **Ctrl+O** | Probe the elevator (READ-ONLY: logs gate values + box geometry) |
+| **Ctrl+P** | Teleport all players into the elevator (for 7+ level transitions) |
 
-Do not override values immediately. First collect runtime names and confirm whether the expected classes/functions exist:
+`Ctrl+K`/`Ctrl+L` jump straight to a map and bypass the lobby/ending-path, so level
+objectives may not initialize — they are travel/spawn **test tools**, not a normal
+way to progress.
 
-- `UBETMultiplayerSettingsWidget`
-- `DefaultMaxPlayers`
-- `MinSelectablePlayers`
-- `MaxSelectablePlayers`
-- `SelectedMaxPlayers`
-- `ClampMaxPlayers`
-- `IncreaseMaxPlayers`
-- `DecreaseMaxPlayers`
-- `GetMaxPlayersText`
-- session creation functions around `CreateGameBaseWidget`
-- functions/objects involving `PublicConnections`, `NumPublicConnections`, `MaxPublicConnections`, `Session.MaxPlayers`, or EOS session max players
+## Install
 
-## Test procedure
+See the repo root `README.md` for the one-command installer
+(`tools/install_ue4ss_mod.py`). In short: install base UE4SS first, then run the
+installer to copy this folder into `…/BET/Binaries/Win64/ue4ss/Mods/`, enable it in
+`mods.txt`, and drop in the anti-lag `Engine.ini`.
 
-1. Install and validate base UE4SS first, without this mod enabled.
-2. Launch through Steam so the game keeps AppId `2141730`.
-3. Enable this mod and confirm its log lines appear.
-4. Open create-game settings and click the player-count controls until the UI clamps at 6.
-5. Save UE4SS logs/dumps for hook-name lookup.
+## Notes
 
-## Escalation path
-
-1. Log object/function availability.
-2. Log calls around multiplayer settings UI.
-3. Log selected/default/max player values.
-4. Override only after call paths and value names are confirmed.
+- Built and tested on the UE 5.7.4 MSVC shipping build with UE4SS v3.0.1.
+- Requires UEHelpers (ships with UE4SS) for host-pawn resolution.
+- Logs everything it does to `UE4SS.log` with `[SPAWN]`/`[SUMMON]`/`[LEVELSW]`/
+  `[RELOAD]`/`[PROBE]`/`[BOARD]` tags.
+- See the repo `CHANGELOG.md` for the full version history and `docs/` for the
+  diagnostics behind each design decision.
