@@ -7,6 +7,22 @@ Generated from game root: `F:\Steam\steamapps\common\Backrooms_Escape_Together`
 The strongest evidence points to a cap implemented across the multiplayer settings UI and online session creation path, not a plain exposed config value.
 The built-in Unreal cvar `net.MaxPlayersOverride` exists and reaches the game when launched through Steam, but it does not update the multiplayer settings UI cap.
 
+## Runtime spawn diagnosis (2026-05-31, clean 7-player test — see CHANGELOG v2.4)
+
+First genuine in-level capture (after fixing the CDO false-positive bug that made all prior "in-level" diagnostics actually run in the lobby). All 7 starters passed IrisGate cleanly; `K2_GetActorLocation` works in a real level.
+
+Spawn mechanism (confirmed by player): **normal players spawn inside an ELEVATOR that descends as a cutscene** to the real spawn point.
+
+DIAG evidence (host's view, 5 rounds 30s apart):
+- 6 players read Z≈7486 in round 1 (mid-cutscene), then settle together at Z≈98.
+- 1 player sits alone at Z≈-7902 every round — a dead-on match for a Neg1 (basement) bedroom PlayerStart (Z=-7900). That player was dropped at a Neg1 PlayerStart and **never rode the elevator**.
+
+Key correction: the **runtime coordinate frame differs from the PlayerStart frame** (correct players are at Z≈98 at runtime, not their PlayerStart's Z=-8400 — a ~+8500 offset). Therefore the old absolute-Z threshold (-8150) is invalid; it mislabels every real player. **Detection must be RELATIVE cluster/outlier**, not an absolute floor constant. This conclusion was adversarially verified (high confidence, survived refutation).
+
+8th player WUEWUE joined ~26s after travel into L_Startup → late-join spectator, never in-level (expected; not a bug).
+
+Deferred issue: level→level transition requires all living players to return to the elevator, which likely cannot hold >6. Workaround: extra players die before transition. See CHANGELOG.
+
 ## Verified launch test
 
 Using `launch\bet_modded_private_test.bat 12` now launches through Steam with AppId `2141730` and passes:
