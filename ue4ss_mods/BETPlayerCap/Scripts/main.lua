@@ -1,6 +1,6 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.6-levelswitch"
+local VERSION = "2.8-reload"
 
 -- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
 -- resolution and GameState-based player enumeration (level-independent).
@@ -276,6 +276,16 @@ local FIX_MAX_TICKS = 8      -- only attempt fix within this many ticks of level
                              -- (after that, a far player likely WENT to Neg1 legitimately)
 local last_median_z = nil
 local settled_reads = 0
+
+-- v2.8 post-travel summon timing. The 2026-05-31 7-player level-switch test showed
+-- the OLD post-travel summon firing too early: right after Ctrl+H it tried to gather
+-- while the host pawn wasn't re-resolved yet ("Could not resolve host pawn — aborting"
+-- on Level 3/4) and while stuck players hadn't possessed (only 5 of 7 readable on
+-- Level 1). So instead of a fixed "2 ticks after detect", we now WAIT for the group to
+-- actually be present + the host pawn resolvable, retrying for a bounded window, then
+-- summon ONCE. This avoids yanking a half-loaded group around.
+local SUMMON_WAIT_TICKS = 6     -- give the new level up to this many ticks to settle
+local summon_wait_count = 0     -- ticks waited so far for the current armed summon
 
 -- v2.6 LEVEL-SWITCH (test tool). BET travels between levels via ProcessServerTravel
 -- (seamless), confirmed in BET.log. We use the same path so all clients are carried
@@ -631,6 +641,7 @@ local function cycle_next_level()
     local nxt = (cur % #LEVEL_MAPS) + 1
     level_cycle_idx = nxt
     summon_after_travel = true
+    summon_wait_count = 0
     travel_arm_tick = diag_tick
     -- reset spawn-fix state so the auto-fix re-arms in the new level
     spawn_fix_applied = false
@@ -656,6 +667,80 @@ local function ensure_levelsw_keybind()
         log("[LEVELSW] Host keybind registered: Ctrl+H = cycle to next level (test tool)")
     else
         log("[LEVELSW] RegisterKeyBind failed — level-switch keybind unavailable")
+    end
+end
+
+-- Resolve the FULL map path of the level we're actually in right now. Prefers the
+-- live GameMode match (works for the 12 main levels incl. Neg1). Falls back to
+-- reading the live world's short map name and matching a LEVEL_MAPS entry by suffix
+-- (covers maps reached via normal in-game progression). Returns path or nil.
+local function get_current_map_path()
+    local idx = detect_current_level_idx()
+    if idx then return LEVEL_MAPS[idx] end
+    -- Fallback: read the live world name (e.g. "L_Level_0") and match by suffix.
+    local short = nil
+    if UEHelpers then
+        short = safe("CurMapName", function()
+            local w = UEHelpers.GetWorld()
+            if w and w:IsValid() then return w:GetName() end
+            return nil
+        end)
+    end
+    if short and short ~= "" then
+        for _, path in ipairs(LEVEL_MAPS) do
+            -- path tail after the last '/' is the umap object name
+            local tail = path:match("([^/]+)$")
+            if tail and tail == short then return path end
+        end
+        -- Unknown map (e.g. HubPuzzle / a map not in our list): reconstruct a best-
+        -- effort path so reload still works. MainLevels convention: Level_<X>/L_Level_<X>.
+        local x = short:match("^L_Level_(.+)$")
+        if x then
+            return "/Game/Maps/MainLevels/Level_" .. x .. "/" .. short
+        end
+    end
+    return nil
+end
+
+-- Ctrl+J: RELOAD the current level (re-travel to the SAME map). This re-runs BET's
+-- IrisGate Disallow->Allow replication pass for everyone, giving players who got
+-- STUCK ON THE LOADING SCREEN (skipped by the no-retry Allow loop — see
+-- bet_irisgate_diagnosis) a fresh chance to load in. It's the escape hatch for the
+-- "some players stuck loading after travel" case observed in the 7-player test.
+-- Like Ctrl+H it carries all clients via seamless ProcessServerTravel; it also arms
+-- the same post-travel auto-summon so the group re-gathers on reload.
+local function reload_current_level()
+    local path = get_current_map_path()
+    if not path then
+        log("[RELOAD] Could not determine current map — reload aborted")
+        return
+    end
+    summon_after_travel = true
+    summon_wait_count = 0
+    travel_arm_tick = diag_tick
+    -- re-arm per-level state so spawn-fix + detection run again on reload
+    spawn_fix_applied = false
+    level_detected = false
+    scan_done = false
+    last_median_z = nil
+    settled_reads = 0
+    log("[RELOAD] Ctrl+J: reloading current level -> " .. path)
+    server_travel(path)
+end
+
+local reload_bound = false
+local function ensure_reload_keybind()
+    if reload_bound then return end
+    local ok = pcall(function()
+        RegisterKeyBind(Key.J, {ModifierKey.CONTROL}, function()
+            ExecuteInGameThread(function() pcall(reload_current_level) end)
+        end)
+    end)
+    if ok then
+        reload_bound = true
+        log("[RELOAD] Host keybind registered: Ctrl+J = reload current level (un-stick)")
+    else
+        log("[RELOAD] RegisterKeyBind failed — reload keybind unavailable")
     end
 end
 
@@ -777,6 +862,7 @@ local function run_monitor()
             -- Register host keybinds now that we're in a real level.
             ensure_summon_keybind()
             ensure_levelsw_keybind()
+            ensure_reload_keybind()
         else
             return
         end
@@ -806,13 +892,32 @@ local function run_monitor()
         spawn_fix_applied = true
     end
 
-    -- Phase 3b: post-Ctrl+H travel auto-summon. After a level switch we arm a
-    -- gather so everyone ends up together on arrival. Wait a few ticks after the
-    -- new level is detected (let pawns possess + settle), then summon once.
-    if summon_after_travel and level_detected and (diag_tick - level_detect_time) >= 2 then
-        log("[LEVELSW] Post-travel auto-summon")
-        pcall(summon_all_to_host)
-        summon_after_travel = false
+    -- Phase 3b: post-travel auto-summon (after Ctrl+H switch OR Ctrl+J reload).
+    -- v2.8 timing fix: the old code summoned a fixed 2 ticks after detect, which the
+    -- 7-player test showed firing BEFORE the host pawn was re-resolved and before
+    -- stuck players had possessed (host-pawn-abort + only 5/7 readable). Now we WAIT
+    -- until BOTH the host pawn resolves AND we can read a reasonable group, retrying up
+    -- to SUMMON_WAIT_TICKS, then summon ONCE. If the window expires we summon with
+    -- whatever resolved (best-effort) so a fully-stuck client doesn't block the rest.
+    if summon_after_travel and level_detected then
+        summon_wait_count = summon_wait_count + 1
+        local host = get_host_pawn()
+        local players = collect_players()
+        local ready = (host ~= nil) and (#players >= 1)
+        if ready then
+            log(string.format("[LEVELSW] Post-travel auto-summon (host ok, %d players, waited %d tick(s))",
+                #players, summon_wait_count))
+            pcall(summon_all_to_host)
+            summon_after_travel = false
+        elseif summon_wait_count >= SUMMON_WAIT_TICKS then
+            log(string.format("[LEVELSW] Post-travel summon window expired (%d ticks); host=%s players=%d — best-effort",
+                summon_wait_count, tostring(host ~= nil), #players))
+            pcall(summon_all_to_host)
+            summon_after_travel = false
+        else
+            log(string.format("[LEVELSW] Waiting to auto-summon (host=%s players=%d, %d/%d)",
+                tostring(host ~= nil), #players, summon_wait_count, SUMMON_WAIT_TICKS))
+        end
     end
 
     -- Phase 4: Periodic diagnostics (every 30s = every 3rd tick).
@@ -850,4 +955,5 @@ log("init complete - adaptive v" .. VERSION)
 log("[ADAPT] Position detection: will try 5 methods (GetActorLocation, K2_GetActorLocation, RootComponent.RelativeLocation, RootComponent.XYZ, GetTransform)")
 log("[SUMMON] Host keybind Ctrl+G (gather all players to host) will arm once in a real level")
 log("[LEVELSW] Host keybind Ctrl+H (cycle to next level, TEST tool) will arm once in a real level")
+log("[RELOAD] Host keybind Ctrl+J (reload current level, un-stick loading) will arm once in a real level")
 log("[ADAPT] UEHelpers " .. (UEHelpers and "loaded" or "NOT FOUND — host-anchor disabled, will use cluster median"))

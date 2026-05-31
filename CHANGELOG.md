@@ -2,6 +2,54 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.8-reload (2026-05-31)
+
+### Ctrl+J = reload current level (un-stick loading) + fixed post-travel summon timing
+
+Diagnosed from a real 7-player level-switch test (UE4SS.log + BET.log, this build). Using
+Ctrl+H to rapidly servertravel through Level 0→1→2→3→4, the user saw: Level 0 fine, **some
+players stuck on the loading screen** on Level 1 (3 stuck) and Level 3 (2 stuck), Level 2
+fine. Game not frozen, voice still worked.
+
+**Root cause (game-native, NOT the mod):** BET's own `[IrisGate]` system gates replication
+across SeamlessTravel — it `Disallow`s every player at travel start, then `Allow`s each one
+after `OnPlayerGenerationComplete`. The BET.log shows the Allow count varying per travel:
+Level 0 = 7/7 Allow, Level 1 = **4/7**, Level 2 = 7/7, Level 3 = **5/7**, Level 4 = 6/7.
+The players who only got `Disallow` and never `Allow` are exactly the ones stuck loading.
+Accompanied by floods of `LogIrisRpc: Error: Rejected RPC ... missing object` — pawns whose
+NetRefHandle wasn't registered when the Allow pass ran. This is a **replication race with no
+retry/timeout**, exposed by rapid back-to-back servertravel (normal elevator progression
+spaces levels far enough apart to rarely hit it). See `bet_irisgate_diagnosis` memory.
+
+Changes in `main.lua`:
+
+- **New host keybind Ctrl+J = "reload current level".** Re-travels to the SAME map via the
+  same seamless `servertravel <map>?listen`, which re-runs the IrisGate Disallow→Allow pass
+  for everyone — giving stuck players a fresh load attempt. The escape hatch for the
+  stuck-loading case. `get_current_map_path()` resolves the live map via GameMode match,
+  with a world-name suffix fallback so reload works even on maps reached by normal
+  progression (incl. ones not in the test list).
+- **Fixed post-travel auto-summon timing.** The old code summoned a fixed 2 ticks after
+  level-detect, which the log showed firing too early: `Could not resolve host pawn —
+  aborting` (host pawn not re-resolved yet) on Level 3/4, and only 5 of 7 players readable
+  on Level 1 (stuck players hadn't possessed). v2.8 now WAITS until the host pawn resolves
+  AND a group is readable, retrying up to `SUMMON_WAIT_TICKS` (6), then summons once;
+  best-effort if the window expires. No more yanking a half-loaded group around.
+- Reload re-arms per-level state (spawn_fix_applied/level_detected/scan_done/median/settled)
+  and the post-travel summon, same as Ctrl+H.
+
+Note: Ctrl+J/Ctrl+H both rely on rapid servertravel which is what *triggers* the IrisGate
+race in the first place — a reload usually re-rolls who (if anyone) gets stuck. It's a
+mitigation, not a cure. A real fix would require hooking BET's IrisGate Allow pass (no
+Lua-callable entry point found yet — `BETGame.hpp` exposes no `AllowReplication`-style
+UFUNCTION). Deferred. The stuck-loading is largely a fast-travel-testing artifact; normal
+elevator progression spaces transitions far enough apart to mostly avoid it.
+
+Separately observed (not mod-related): the game **hangs on exit** waiting on telemetry
+uploads — BET.log end shows `amazonaws.com/.../ingest` HTTP timeout (30s) + Sentry
+`WinHttpSendRequest` code `12007` retrying 6×. Cosmetic shutdown stall; could be mitigated
+by blocking those domains but out of scope.
+
 ## v2.7-levelorder (2026-05-31)
 
 ### Level order is NOT numeric — corrected the Ctrl+H test jumper's framing
