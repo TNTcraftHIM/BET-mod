@@ -1,6 +1,6 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.11-host-exclude"
+local VERSION = "2.12-rebind"
 
 -- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
 -- resolution and GameState-based player enumeration (level-independent).
@@ -673,12 +673,13 @@ local function server_travel(map_path)
     log("[LEVELSW] ServerTravel -> " .. map_path)
 end
 
--- Ctrl+H: cycle to the NEXT level (relative to the one we're actually in, if
--- detectable; else relative to our own counter). Arms a post-travel summon so
--- everyone is gathered on arrival.
-local function cycle_next_level()
+-- Step to an adjacent level (delta=+1 next, -1 prev), relative to the level we're
+-- actually in (if detectable; else our own counter). Wraps around the list.
+-- Arms the post-travel state (auto-gather itself is disabled since v2.10; this
+-- just re-arms the spawn-fix + logs a "press Ctrl+G" reminder on arrival).
+local function do_level_step(delta, tag)
     local cur = detect_current_level_idx() or level_cycle_idx
-    local nxt = (cur % #LEVEL_MAPS) + 1
+    local nxt = ((cur - 1 + delta) % #LEVEL_MAPS) + 1
     level_cycle_idx = nxt
     summon_after_travel = true
     summon_wait_count = 0
@@ -689,24 +690,29 @@ local function cycle_next_level()
     scan_done = false
     last_median_z = nil
     settled_reads = 0
-    log(string.format("[LEVELSW] Ctrl+H: level %d -> %d (%s)",
-        cur, nxt, LEVEL_MAPS[nxt]))
+    log(string.format("[LEVELSW] %s: level %d -> %d (%s)",
+        tag, cur, nxt, LEVEL_MAPS[nxt]))
     server_travel(LEVEL_MAPS[nxt])
 end
+local function cycle_next_level() do_level_step(1, "Ctrl+L next") end
+local function cycle_prev_level() do_level_step(-1, "Ctrl+K prev") end
 
 local levelsw_bound = false
 local function ensure_levelsw_keybind()
     if levelsw_bound then return end
     local ok = pcall(function()
-        RegisterKeyBind(Key.H, {ModifierKey.CONTROL}, function()
+        RegisterKeyBind(Key.L, {ModifierKey.CONTROL}, function()
             ExecuteInGameThread(function() pcall(cycle_next_level) end)
+        end)
+        RegisterKeyBind(Key.K, {ModifierKey.CONTROL}, function()
+            ExecuteInGameThread(function() pcall(cycle_prev_level) end)
         end)
     end)
     if ok then
         levelsw_bound = true
-        log("[LEVELSW] Host keybind registered: Ctrl+H = cycle to next level (test tool)")
+        log("[LEVELSW] Host keybinds: Ctrl+L = next level, Ctrl+K = prev level (test tool)")
     else
-        log("[LEVELSW] RegisterKeyBind failed — level-switch keybind unavailable")
+        log("[LEVELSW] RegisterKeyBind failed — level-switch keybinds unavailable")
     end
 end
 
@@ -839,7 +845,7 @@ local function get_elevator_target(elevator)
     return get_actor_pos(elevator, "ElevActor"), box
 end
 
--- Ctrl+P: READ-ONLY probe. Logs the live elevator's real gate values + box
+-- Ctrl+O: READ-ONLY probe/detect. Logs the live elevator's real gate values + box
 -- geometry so we confirm the count-gate model BEFORE cramming. No side effects
 -- beyond the (read-only) predicate call.
 local function probe_elevator()
@@ -869,7 +875,7 @@ local function probe_elevator()
         .. " ; possessed=" .. tostring(#collect_players()))
 end
 
--- Ctrl+K: cram EVERY possessed player (incl. host) into the elevator trigger box
+-- Ctrl+P: cram EVERY possessed player (incl. host) into the elevator trigger box
 -- in a tight ring, then ask the game's own gate to re-evaluate. Never forces
 -- StartElevator or writes the counter -- the game's authoritative code decides.
 local function board_elevator()
@@ -929,13 +935,13 @@ local probe_bound = false
 local function ensure_probe_keybind()
     if probe_bound then return end
     local ok = pcall(function()
-        RegisterKeyBind(Key.P, {ModifierKey.CONTROL}, function()
+        RegisterKeyBind(Key.O, {ModifierKey.CONTROL}, function()
             ExecuteInGameThread(function() pcall(probe_elevator) end)
         end)
     end)
     if ok then
         probe_bound = true
-        log("[PROBE] Host keybind registered: Ctrl+P = read elevator gate (probe)")
+        log("[PROBE] Host keybind registered: Ctrl+O = read elevator gate (probe/detect)")
     else
         log("[PROBE] RegisterKeyBind failed — probe keybind unavailable")
     end
@@ -945,13 +951,13 @@ local board_bound = false
 local function ensure_board_keybind()
     if board_bound then return end
     local ok = pcall(function()
-        RegisterKeyBind(Key.K, {ModifierKey.CONTROL}, function()
+        RegisterKeyBind(Key.P, {ModifierKey.CONTROL}, function()
             ExecuteInGameThread(function() pcall(board_elevator) end)
         end)
     end)
     if ok then
         board_bound = true
-        log("[BOARD] Host keybind registered: Ctrl+K = cram all players into elevator")
+        log("[BOARD] Host keybind registered: Ctrl+P = teleport all players into elevator")
     else
         log("[BOARD] RegisterKeyBind failed — board keybind unavailable")
     end
@@ -1156,8 +1162,8 @@ end)
 log("init complete - adaptive v" .. VERSION)
 log("[ADAPT] Position detection: will try 5 methods (GetActorLocation, K2_GetActorLocation, RootComponent.RelativeLocation, RootComponent.XYZ, GetTransform)")
 log("[SUMMON] Host keybind Ctrl+G (gather all players to host) will arm once in a real level")
-log("[LEVELSW] Host keybind Ctrl+H (cycle to next level, TEST tool) will arm once in a real level")
+log("[LEVELSW] Host keybinds Ctrl+L (next level) / Ctrl+K (prev level), TEST tool, will arm once in a real level")
 log("[RELOAD] Host keybind Ctrl+J (reload current level, un-stick loading) will arm once in a real level")
-log("[PROBE] Host keybind Ctrl+P (read elevator gate, READ-ONLY probe) will arm once in a real level")
-log("[BOARD] Host keybind Ctrl+K (cram all players into elevator) will arm once in a real level")
+log("[PROBE] Host keybind Ctrl+O (read elevator gate, READ-ONLY probe/detect) will arm once in a real level")
+log("[BOARD] Host keybind Ctrl+P (teleport all players into elevator) will arm once in a real level")
 log("[ADAPT] UEHelpers " .. (UEHelpers and "loaded" or "NOT FOUND — host-anchor disabled, will use cluster median"))

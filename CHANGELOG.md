@@ -2,6 +2,38 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.12-rebind (2026-05-31)
+
+### Remap keybinds to reduce mis-presses (user request, mid-playtest)
+
+Keybinds rearranged so the "dangerous" elevator-teleport isn't next to the level
+controls and the two destructive actions sit apart:
+
+| Key | Before | After |
+|---|---|---|
+| **Ctrl+G** | gather all to host | gather all to host (unchanged) |
+| **Ctrl+J** | reload current level | reload current level (unchanged) |
+| **Ctrl+K** | cram into elevator | **prev level** |
+| **Ctrl+L** | — | **next level** |
+| **Ctrl+H** | next level | *removed* (replaced by Ctrl+L) |
+| **Ctrl+O** | — | **elevator probe/detect (READ-ONLY)** |
+| **Ctrl+P** | elevator probe | **teleport all into elevator** |
+
+Changes in `main.lua`:
+
+- `cycle_next_level` refactored into `do_level_step(delta, tag)` so we now have BOTH
+  directions: `cycle_next_level` (delta +1, Ctrl+L) and `cycle_prev_level` (delta -1,
+  Ctrl+K). Wrap-around math fixed to be symmetric (`((cur-1+delta) % N) + 1`) so prev
+  from level 1 wraps to the last entry.
+- `ensure_levelsw_keybind` now registers Ctrl+L (next) and Ctrl+K (prev); Ctrl+H removed.
+- Probe rebound from Ctrl+P to **Ctrl+O**; board/cram rebound from Ctrl+K to **Ctrl+P**.
+- Updated all `[PROBE]`/`[BOARD]`/`[LEVELSW]` startup + function-header log strings.
+
+No behavior change beyond the key mapping; the gather/spawn/elevator logic from
+v2.10/v2.11 is untouched. Final host keybind set: **Ctrl+G** gather · **Ctrl+J** reload ·
+**Ctrl+K** prev level · **Ctrl+L** next level · **Ctrl+O** elevator probe ·
+**Ctrl+P** teleport into elevator.
+
 ## v2.11-host-exclude (2026-05-31)
 
 ### Fix: Ctrl+G "Summon All" was teleporting the HOST too (UObject identity bug)
