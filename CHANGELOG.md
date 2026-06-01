@@ -2,12 +2,16 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+> Current install/use instructions are in `README.md` and `docs/USER_GUIDE.md`.
+> Older entries preserve development history and may mention superseded keybinds or
+> hypotheses.
+
 ## v2.14-nudge (2026-06-01)
 
 ### Ctrl+Arrow noclip nudge + Ctrl+K/L are normal features again
 
 - **New host keybinds: Ctrl+Arrows / Ctrl+PageUp-Down = noclip-nudge the host.**
-  Snaps the host pawn a small (~100u) step with no collision, to cheat past a spot
+  Snaps the host pawn a small (~100u) step with no collision, to work around a spot
   a 7+ player run can't pass normally (stuck geometry, a player-count-gated section).
   Horizontal is **camera-relative** — computed from the controller's yaw, so Ctrl+Up
   = where the host is looking (flattened to horizontal), Ctrl+Down = back, Ctrl+Left/
@@ -23,12 +27,12 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
   ordinary level prev/next controls and are enabled by default. `ENABLE_PERIODIC_DIAG`
   stays off (pure diagnostics).
 
-### Voice issue (FREEZE / 烤面筋): confirmed NOT mod-related
+### Voice issue: confirmed NOT mod-related
 
-User confirmed the two players' voice failure also happens **without the mod
+User confirmed the player-specific voice failure also happens **without the mod
 installed**, so it is a base-game / EOS RTC / client-network issue, not anything this
-mod does. Removed from the mod's todo; kept the diagnostic notes for the players' own
-logs in `bet_multiplayer_lag_voicechat` memory for reference only.
+mod does. Removed from the mod's todo; kept non-identifying diagnostic notes in memory
+for reference only.
 
 Validation: Lua opener/end balance `284 == 284`; 12 keybinds registered with no
 collisions (G/J/K/L/O/P + 6 arrow/page binds).
@@ -66,22 +70,13 @@ release risk more than it adds features.
 
 Validation: Lua opener/end balance `255 == 255`; installer `py_compile` passed.
 
-### Voice issue investigation: FREEZE / 烤面筋
+### Voice issue investigation
 
-Host log evidence says both affected players join gameplay normally, but do **not** appear
-as normal EOS RTC voice-room participants from the host's point of view:
-
-- FREEZE maps to PUID `0002936e64b647b1be3980ccf837bad3`.
-- 烤面筋 maps to PUID `000227f8d6cb4cbd9c418a9fd5bb1995`.
-- Both have gameplay login/join success and `ResolveOwnerProductUserId` voice-synth owner
-  resolution, but unlike healthy/underrunning players they do not show convincing
-  `SetPlayerVolume` / `RTCAudio UpdatedParticipantState subscribed=[Yes]` evidence as voice
-  participants on the host.
-
-Conclusion: this is **not** the same as the voice underrun/log-flood problem. It looks more
-like per-client EOS RTC voice join/admission/signaling, high-player-count voice routing, or
-client network/firewall/VPN/account state. Decisive next evidence requires the affected
-players' own `BET.log` files around join time; see the response plan / docs for search terms.
+Host log evidence suggested some affected players joined gameplay normally but did not
+appear as normal EOS RTC voice-room participants from the host's point of view. This was
+later confirmed to reproduce without the mod installed, so it is treated as a base-game /
+EOS RTC / client-network issue, not a BETPlayerCap issue. Public troubleshooting notes are
+kept in `docs/troubleshooting/README.md`.
 
 ## v2.12.0 — release prep (2026-05-31)
 

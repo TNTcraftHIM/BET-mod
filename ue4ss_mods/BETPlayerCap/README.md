@@ -31,7 +31,7 @@ need it installed — they just join the host's lobby.
 
 `Ctrl+K`/`Ctrl+L` jump straight to a map and bypass the lobby/ending-path, so level
 objectives may not initialize. `Ctrl+Arrows` / `Ctrl+PageUp/Down` move the host in
-small no-collision steps (~100u/press, camera-relative horizontally) — a cheat to
+small no-collision steps (~100u/press, camera-relative horizontally) — a recovery tool to
 get the host past a spot a 7+ player run can't pass normally. They ignore walls, so
 tap carefully near ledges. All of these are host-only.
 

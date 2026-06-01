@@ -1,117 +1,120 @@
 # BET Player Cap Mod
 
-A UE4SS mod for **Backrooms Escape Together** that raises the multiplayer player
-cap above the default **6** (target **12**), plus host tools to keep a 7+ player
-run working: gather scattered players, switch/reload levels, and board the elevator
-for level transitions.
+A Windows UE4SS mod package for **Backrooms: Escape Together** that lets a private
+lobby host play with more than the default 6 players (target cap: **12**) and adds
+host tools for the main 7+ player pain points: gathering separated players, reloading
+a stuck level, boarding elevators, and nudging through geometry when a level was not
+built for that many bodies.
 
-> Only the **host** installs this. Clients just join the host's lobby normally.
-> Test in **private lobbies with consenting friends** — not public matchmaking.
+> **Host-only install.** Only the lobby host/listen-server needs the mod. Friends can
+> join normally with an unmodified game.
+>
+> **Private/consenting lobbies only.** Do not use this for public matchmaking or to
+> disrupt other players.
 
-## Requirements
+## Download / install
 
-- **Backrooms Escape Together** on Steam (UE 5.7.4 shipping build).
-- **UE4SS v3.0.1** installed for the game (third-party — see *Install UE4SS* below).
-- **Python 3** to run the installer (any recent Python; Anaconda is fine).
+Use the full Windows package from the GitHub Releases page:
+
+```text
+BETPlayerCap-v2.14-full.zip
+```
+
+A local build may also produce the same file under `dist/` for maintainer use.
+
+It includes the tested UE4SS runtime/proxy DLLs, BETPlayerCap, required Keybinds and
+UEHelpers support files, an anti-lag `Engine.ini`, and no-Python install/uninstall
+scripts.
+
+1. Close the game.
+2. Extract the zip anywhere.
+3. Double-click `install.bat`.
+   - Default game path: `F:\Steam\steamapps\common\Backrooms_Escape_Together`
+   - If your game is elsewhere, drag the game root folder onto `install.bat`, or run:
+     ```bat
+     install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
+     ```
+4. Launch through Steam and host a private lobby.
+
+Uninstall with `uninstall.bat` from the same extracted folder. The installer records
+what it changed and restores backups where possible.
 
 ## Host keybinds
 
 | Key | Action |
 |-----|--------|
-| **Ctrl+G** | Gather all players to the host (manual, anytime) |
-| **Ctrl+J** | Reload the current level (un-stick a player stuck on loading) |
+| **Ctrl+G** | Gather all players to the host |
+| **Ctrl+J** | Reload the current level (helps players stuck on loading) |
 | **Ctrl+K** | Previous level |
 | **Ctrl+L** | Next level |
-| **Ctrl+O** | Probe the elevator (READ-ONLY: logs gate values + box geometry) |
-| **Ctrl+P** | Teleport all players into the elevator (for 7+ level transitions) |
-| **Ctrl+Arrows** | Noclip-nudge the host (camera-relative: ↑ forward, ↓ back, ←/→ strafe) |
-| **Ctrl+PageUp/Down** | Noclip-nudge the host up / down (Z axis) |
+| **Ctrl+O** | Probe elevator state (read-only diagnostics) |
+| **Ctrl+P** | Teleport all players into the elevator |
+| **Ctrl+Arrow keys** | Noclip-nudge host: forward/back/strafe relative to where host looks |
+| **Ctrl+PageUp/PageDown** | Noclip-nudge host up/down on Z axis |
 
-`Ctrl+Arrows` / `Ctrl+PageUp/Down` move the host in small no-collision steps —
-a cheat to get past a spot a 7+ player run can't pass normally. Each press steps
-~100 units and ignores walls, so tap carefully near ledges.
+Notes:
 
-A wrong-floor player is also **auto-gathered on normal level entry** (settling-gated,
-outlier-only — it won't yank someone who walked off on purpose).
+- The mod also has a spawn-time auto-fix for the known "one player spawns on the wrong
+  floor" case. It is settling-gated and outlier-only.
+- Noclip nudge ignores collision and moves about 100 units per press. Tap carefully near
+  ledges or voids.
+- Ctrl+K/L jump maps directly and can bypass normal objective/ending-path setup. They are
+  convenience tools, not a faithful progression system.
 
-## Install
+## Known limitations
 
-### Recommended: full no-Python release zip
+- **Occasional stuck loading** is a game-native Iris replication race, especially after
+  rapid level travel. Use **Ctrl+J** to reload the current level and retry.
+- **Voice chat failures for individual players** also occur without this mod. They appear
+  to be base-game/EOS RTC/client-network issues, not BETPlayerCap. The included anti-lag
+  config only suppresses the worst voice log flood; it does not fix EOS voice itself.
+- Some levels were not designed for 7+ players. The elevator and noclip tools are practical
+  workarounds, not official level support.
 
-Use `dist/BETPlayerCap-v2.14-full.zip`. It includes the tested UE4SS runtime/proxy
-DLLs, the BETPlayerCap mod, Keybinds/UEHelpers dependencies, anti-lag `Engine.ini`,
-and double-click installers.
+## What the package installs
 
-1. Close the game.
-2. Extract `BETPlayerCap-v2.14-full.zip` anywhere.
-3. Double-click `install.bat`.
-   - Default game path: `F:\Steam\steamapps\common\Backrooms_Escape_Together`
-   - If the game is elsewhere, drag the game root folder onto `install.bat`, or run:
-     ```bat
-     install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
-     ```
-4. Launch through Steam and host a lobby. Only the host needs this package.
+- UE4SS proxy/runtime files under `BET/Binaries/Win64/` (`dwmapi.dll`, `ue4ss/UE4SS.dll`,
+  signatures, settings, and runtime DLL dependencies).
+- `ue4ss/Mods/BETPlayerCap/`.
+- Required UE4SS support mods: `Keybinds` and `shared/UEHelpers`.
+- User config anti-lag file:
+  `%LOCALAPPDATA%\BET\Saved\Config\Windows\Engine.ini`.
 
-Uninstall with `uninstall.bat` from the same extracted folder.
+The release package intentionally excludes local logs/dumps/development artifacts such as
+`UE4SS.log`, `UE4SS_ObjectDump.txt`, `CXXHeaderDump/`, crash dumps, and debug sample mods.
 
-### Developer/source install
+## Building / source install
 
-If you already installed UE4SS manually and want to install from source instead of the
-full zip:
+The source tree is kept for development and auditability. Most users should use the full
+zip above.
+
+If you already have UE4SS installed and only want to copy the Lua mod from source:
 
 ```bat
 python tools\install_ue4ss_mod.py install
 ```
 
-This source installer copies only the mod and anti-lag config; it expects base UE4SS to
-already exist. Pass `--game-root "D:\path\to\Backrooms_Escape_Together"` for a non-default
-path.
-
-### Source uninstall
+For a non-default game path:
 
 ```bat
-python tools\install_ue4ss_mod.py uninstall
+python tools\install_ue4ss_mod.py install --game-root "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
 ```
-Removes the mod folder, restores the `mods.txt` state, and restores/removes `Engine.ini`
-from its backup.
-
-### UE4SS note
-
-The full zip bundles the tested UE4SS runtime needed by this mod. The source installer
-path does **not** bundle/install UE4SS; it only checks that UE4SS exists.
-
-## Anti-lag Engine.ini
-
-7-player sessions can lag because the game's voice chat logs a per-frame "underrun"
-warning that floods `BET.log` (seen at **76 MB / 405k lines**), and on a listen
-server that disk flood drops the host tick rate — raising latency for everyone.
-The bundled `config/Engine.ini` raises the log threshold for the single worst
-category (`LogTriiodideVoiceChatSynth`) so the per-frame audio-synth underrun flood
-stops being written. Other voice channel logs remain visible so player-specific
-voice issues can still be diagnosed. It changes logging only, not gameplay, and is
-reversible (the uninstaller restores your original). Details in
-[`docs/performance_lag_diagnosis.md`](docs/performance_lag_diagnosis.md).
-
-## Known issues
-
-- **Stuck on loading after rapid level switches** — a game-native replication race
-  (IrisGate) with no retry. Press **Ctrl+J** to reload and re-roll it. Normal
-  elevator progression spaces travels out enough to mostly avoid it.
-- **Voice underrun itself** is network-side (host uplink saturation under 7-way
-  voice); the anti-lag ini removes the logging amplifier but can't fix the uplink.
 
 ## Repository layout
 
-- `ue4ss_mods/BETPlayerCap/` — the mod source (Lua + metadata). This is what ships.
-- `config/Engine.ini` — anti-lag logging override (installed to the user config dir).
-- `tools/install_ue4ss_mod.py` — one-command install/uninstall.
-- `tools/check_install.py` — verifies game files and checks for anti-cheat.
-- `tools/scan_bet_strings.py`, `tools/aob_scanner_v*.py` — research scanners.
-- `docs/` — findings, level structure, signatures, and the lag diagnosis.
-- `CHANGELOG.md` — full version history (currently **v2.14**).
+- `dist/` — ready-to-share full release zip.
+- `ue4ss_mods/BETPlayerCap/` — Lua mod source.
+- `config/Engine.ini` — anti-lag log-suppression config used by installers.
+- `tools/` — source/developer install, release-build, and check helpers.
+- `tools/research/` — historical scanners/signature tools; not needed for normal use.
+- `docs/troubleshooting/` — user-facing diagnostics and troubleshooting notes.
+- `docs/research/` — historical investigation notes kept for traceability.
+- `CHANGELOG.md` — detailed version history.
+- `THIRD_PARTY_NOTICES.md` — notes for bundled UE4SS runtime files.
 
-## Safety
+## Safety / scope
 
-- Private lobbies with consenting players only; not for public matchmaking.
-- No anti-cheat bypass or detection evasion (none was found in this game's files).
-- All changes are reversible; the installer backs up files before replacing them.
+- This is a cooperative private-lobby mod, not a public matchmaking tool.
+- It does not bypass anti-cheat or implement detection evasion.
+- It ships reversible installers and avoids destructive game-file patching.
+- It is unofficial and may break after game updates.

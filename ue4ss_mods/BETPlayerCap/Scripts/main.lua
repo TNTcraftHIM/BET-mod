@@ -306,7 +306,7 @@ local settled_reads = 0
 
 -- v2.14 host noclip-nudge: step size per Ctrl+Arrow / Ctrl+PageUp-Down keypress.
 -- teleport_pawn snaps with bSweep=false,bTeleport=true (no collision sweep), so a
--- nudge can push the host THROUGH geometry — used to cheat past a spot where a
+-- nudge can push the host THROUGH geometry — used to work around a spot where a
 -- 7+ player count can't progress normally. Horizontal is CAMERA-RELATIVE (forward =
 -- where you look), computed from control-rotation yaw. Keep small to stay on-tile.
 local NUDGE_STEP   = 100   -- horizontal world units per Ctrl+Arrow
@@ -337,8 +337,8 @@ local summon_wait_count = 0     -- ticks waited so far for the current armed sum
 -- "next level" is data-driven and player-chosen, not L_Level_<N+1>.
 -- The list below is just a convenient TEST TRAVERSAL (every path is a confirmed-valid
 -- map, ordered Level 0 first = the real StartLevel). Jumping straight to a map also
--- bypasses the lobby start + elevator + ending-path, so OBJECTIVES may not init.
--- This is a SPAWN/travel TEST AID only — see docs/level_structure.md.
+-- skip normal lobby start + elevator + ending-path setup, so OBJECTIVES may not init.
+-- This is a SPAWN/travel TEST AID only — see docs/research/level_structure.md.
 local LEVEL_MAPS = {
     "/Game/Maps/MainLevels/Level_0/L_Level_0",      -- real StartLevel
     "/Game/Maps/MainLevels/Level_1/L_Level_1",
@@ -671,7 +671,7 @@ end
 -- against the per-level gamemode names. Returns the LEVEL_MAPS index or nil.
 -- Lets Ctrl+H "step from where we actually are" rather than from a stale counter.
 -- MUST stay parallel (same order) with LEVEL_MAPS above. Gamemode class names
--- confirmed from BETGame.hpp / docs/level_structure.md.
+-- confirmed from BETGame.hpp / docs/research/level_structure.md.
 local LEVEL_GM_BY_INDEX = {
     "BP_Level0GameMode_C", "BP_Level1_GameMode_C", "BP_Level2GameMode_C",
     "BP_Level3GameMode_C", "BP_Level4GameMode_C", "BP_Level6GameMode_C",
@@ -1009,7 +1009,7 @@ local function ensure_board_keybind()
     end
 end
 
--- HOST NOCLIP NUDGE (v2.14): snap the HOST pawn a small step to cheat past a spot
+-- HOST NOCLIP NUDGE (v2.14): snap the HOST pawn a small step to work around a spot
 -- where a 7+ player count can't progress (stuck geometry, an objective gated on
 -- fewer players, etc). Reuses the verified replicating teleport (bSweep=false,
 -- bTeleport=true + ForceNetUpdate) so it ignores collision (noclip) and the new
