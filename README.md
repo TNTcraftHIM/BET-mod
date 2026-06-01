@@ -22,6 +22,10 @@ BETPlayerCap-v2.14-full.zip
 
 A local build may also produce the same file under `dist/` for maintainer use.
 
+Verify your download against the tracked checksum
+([`dist/BETPlayerCap-v2.14-full.zip.sha256`](dist/BETPlayerCap-v2.14-full.zip.sha256));
+see [`RELEASES.md`](RELEASES.md).
+
 It includes the tested UE4SS runtime/proxy DLLs, BETPlayerCap, required Keybinds and
 UEHelpers support files, an anti-lag `Engine.ini`, and no-Python install/uninstall
 scripts.
