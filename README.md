@@ -36,31 +36,49 @@ outlier-only — it won't yank someone who walked off on purpose).
 
 ## Install
 
-1. **Install UE4SS** for the game first (see below). Launch once through Steam and
-   confirm the game reaches the main menu with UE4SS loaded.
-2. **Run the installer** from this repo:
-   ```bat
-   python tools\install_ue4ss_mod.py install
-   ```
-   It copies the mod into `…\BET\Binaries\Win64\ue4ss\Mods\`, enables it in
-   `mods.txt`, and installs the anti-lag `Engine.ini` (backing up any existing one).
-   If your game isn't on the default path, pass `--game-root "D:\path\to\BET"`.
-3. **Launch through Steam** and host a lobby. Set the player count above 6.
+### Recommended: full no-Python release zip
 
-### Uninstall (fully reversible)
+Use `dist/BETPlayerCap-v2.14-full.zip`. It includes the tested UE4SS runtime/proxy
+DLLs, the BETPlayerCap mod, Keybinds/UEHelpers dependencies, anti-lag `Engine.ini`,
+and double-click installers.
+
+1. Close the game.
+2. Extract `BETPlayerCap-v2.14-full.zip` anywhere.
+3. Double-click `install.bat`.
+   - Default game path: `F:\Steam\steamapps\common\Backrooms_Escape_Together`
+   - If the game is elsewhere, drag the game root folder onto `install.bat`, or run:
+     ```bat
+     install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
+     ```
+4. Launch through Steam and host a lobby. Only the host needs this package.
+
+Uninstall with `uninstall.bat` from the same extracted folder.
+
+### Developer/source install
+
+If you already installed UE4SS manually and want to install from source instead of the
+full zip:
+
+```bat
+python tools\install_ue4ss_mod.py install
+```
+
+This source installer copies only the mod and anti-lag config; it expects base UE4SS to
+already exist. Pass `--game-root "D:\path\to\Backrooms_Escape_Together"` for a non-default
+path.
+
+### Source uninstall
 
 ```bat
 python tools\install_ue4ss_mod.py uninstall
 ```
-Removes the mod folder, disables it in `mods.txt`, and restores/removes `Engine.ini`
+Removes the mod folder, restores the `mods.txt` state, and restores/removes `Engine.ini`
 from its backup.
 
-### Install UE4SS
+### UE4SS note
 
-UE4SS is a separate project (not bundled here). Get the build for your game from
-the official UE4SS releases and follow its install steps — the loader is the
-`dwmapi.dll` proxy in `…\BET\Binaries\Win64\`, with the runtime under `…\Win64\ue4ss\`.
-This installer checks those exist before it does anything.
+The full zip bundles the tested UE4SS runtime needed by this mod. The source installer
+path does **not** bundle/install UE4SS; it only checks that UE4SS exists.
 
 ## Anti-lag Engine.ini
 

@@ -5,3 +5,4 @@ __pycache__/
 *.bak_*
 .DS_Store
 Thumbs.db
+release/
