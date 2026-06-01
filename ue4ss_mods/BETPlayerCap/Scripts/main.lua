@@ -1,6 +1,11 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.12-rebind"
+local VERSION = "2.13-audit-hardening"
+
+-- Release-mode toggles. Keep risky/debug-heavy helpers OFF by default for public
+-- release; turn them on locally when doing diagnostics.
+local ENABLE_LEVEL_TEST_KEYS = false    -- Ctrl+K/L prev/next level (bypasses objectives)
+local ENABLE_PERIODIC_DIAG   = false    -- 30s player-position diagnostics after spawn fix
 
 -- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
 -- resolution and GameState-based player enumeration (level-independent).
@@ -58,6 +63,27 @@ end
 -- which have real instances in the lobby). Secondary signal: a Survivor pawn
 -- that is actually possessed (has a Controller) -- impossible in the lobby.
 local GAMEPLAY_GAMEMODE_CLASSES = {"BP_Level0GameMode_C", "BETGameMode"}
+local HOST_GAMEMODE_CLASSES = {
+    "BP_LobbyGameMode_C", "LobbyGameMode", "BP_Level0GameMode_C", "BP_Level1_GameMode_C",
+    "BP_Level2GameMode_C", "BP_Level3GameMode_C", "BP_Level4GameMode_C", "BP_Level6GameMode_C",
+    "BP_Level37GameMode_C", "BP_Level232GameMode_C", "BP_LevelFUNGameMode_C",
+    "BP_LevelRunGameMode_C", "BP_LevelHubGameMode_C", "BP_LevelNeg1GameMode_C",
+    "BETGameMode", "GameModeBase",
+}
+local function is_host_authority()
+    -- In Unreal networking, only the server/listen-host owns a live GameMode.
+    -- Clients may have GameState/PlayerController but not GameMode. find_first_instance
+    -- is CDO-safe, so Default__GameModeBase does not produce a false host signal.
+    for _, name in ipairs(HOST_GAMEMODE_CLASSES) do
+        if find_first_instance(name) then return true end
+    end
+    return false
+end
+local function require_host(action)
+    if is_host_authority() then return true end
+    log("[HOST] " .. action .. " ignored: this mod's host tools only work on the listen-server host")
+    return false
+end
 local function in_gameplay_level()
     for _, name in ipairs(GAMEPLAY_GAMEMODE_CLASSES) do
         if find_first_instance(name) then return true, name end
@@ -220,9 +246,10 @@ local widget_props = {
 
 local function apply_overrides()
     local wclass = resolve_class("widget")
-    local widget = safe("FindWidget", function()
-        return FindFirstOf(wclass)
-    end)
+    -- MUST be CDO-safe: FindFirstOf can return Default__ widgets. Use the same
+    -- live-instance filter as level detection, otherwise the cap override may
+    -- write only to an archetype/stale object and not the live UI instance.
+    local widget = find_first_instance(wclass)
     if not widget then return end
 
     for _, prop in ipairs(widget_props) do
@@ -564,6 +591,7 @@ end
 -- Manual, host-only (only the host runs this mod), one-shot per press. This is
 -- the level-independent escape hatch for ANY separation, not just Z-axis.
 local function summon_all_to_host()
+    if not require_host("Ctrl+G summon") then return end
     local host = get_host_pawn()
     if not host then
         log("[SUMMON] Could not resolve host pawn — aborting")
@@ -678,6 +706,7 @@ end
 -- Arms the post-travel state (auto-gather itself is disabled since v2.10; this
 -- just re-arms the spawn-fix + logs a "press Ctrl+G" reminder on arrival).
 local function do_level_step(delta, tag)
+    if not require_host(tag) then return end
     local cur = detect_current_level_idx() or level_cycle_idx
     local nxt = ((cur - 1 + delta) % #LEVEL_MAPS) + 1
     level_cycle_idx = nxt
@@ -699,7 +728,13 @@ local function cycle_prev_level() do_level_step(-1, "Ctrl+K prev") end
 
 local levelsw_bound = false
 local function ensure_levelsw_keybind()
-    if levelsw_bound then return end
+    if levelsw_bound or not ENABLE_LEVEL_TEST_KEYS then
+        if not levelsw_bound and not ENABLE_LEVEL_TEST_KEYS then
+            levelsw_bound = true
+            log("[LEVELSW] Ctrl+K/L level test keys disabled in release config")
+        end
+        return
+    end
     local ok = pcall(function()
         RegisterKeyBind(Key.L, {ModifierKey.CONTROL}, function()
             ExecuteInGameThread(function() pcall(cycle_next_level) end)
@@ -756,6 +791,7 @@ end
 -- Like Ctrl+H it carries all clients via seamless ProcessServerTravel; it also arms
 -- the same post-travel auto-summon so the group re-gathers on reload.
 local function reload_current_level()
+    if not require_host("Ctrl+J reload") then return end
     local path = get_current_map_path()
     if not path then
         log("[RELOAD] Could not determine current map — reload aborted")
@@ -849,6 +885,7 @@ end
 -- geometry so we confirm the count-gate model BEFORE cramming. No side effects
 -- beyond the (read-only) predicate call.
 local function probe_elevator()
+    if not require_host("Ctrl+O probe") then return end
     local e, cls = find_elevator()
     if not e then log("[PROBE] No live elevator found"); return end
     local need = safe("p_need", function() return e.PlayersNeededToStartElevator end)
@@ -879,6 +916,7 @@ end
 -- in a tight ring, then ask the game's own gate to re-evaluate. Never forces
 -- StartElevator or writes the counter -- the game's authoritative code decides.
 local function board_elevator()
+    if not require_host("Ctrl+P board elevator") then return end
     local e, cls = find_elevator()
     if not e then log("[BOARD] No live elevator found - aborting"); return end
     local target, box = get_elevator_target(e)
@@ -1132,7 +1170,7 @@ local function run_monitor()
     -- Cluster-RELATIVE classification: the old absolute -8150 threshold is
     -- meaningless (runtime frame differs from PlayerStart frame). We report each
     -- player's Z plus its distance from the group median.
-    if diag_tick % 3 == 0 then
+    if ENABLE_PERIODIC_DIAG and diag_tick % 3 == 0 then
         local players = collect_players()
         local count = #players
         if count > 0 then
@@ -1162,7 +1200,7 @@ end)
 log("init complete - adaptive v" .. VERSION)
 log("[ADAPT] Position detection: will try 5 methods (GetActorLocation, K2_GetActorLocation, RootComponent.RelativeLocation, RootComponent.XYZ, GetTransform)")
 log("[SUMMON] Host keybind Ctrl+G (gather all players to host) will arm once in a real level")
-log("[LEVELSW] Host keybinds Ctrl+L (next level) / Ctrl+K (prev level), TEST tool, will arm once in a real level")
+log("[LEVELSW] Ctrl+K/L level-test keys are disabled by default; set ENABLE_LEVEL_TEST_KEYS=true for diagnostics")
 log("[RELOAD] Host keybind Ctrl+J (reload current level, un-stick loading) will arm once in a real level")
 log("[PROBE] Host keybind Ctrl+O (read elevator gate, READ-ONLY probe/detect) will arm once in a real level")
 log("[BOARD] Host keybind Ctrl+P (teleport all players into elevator) will arm once in a real level")

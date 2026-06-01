@@ -20,10 +20,14 @@ for level transitions.
 |-----|--------|
 | **Ctrl+G** | Gather all players to the host (manual, anytime) |
 | **Ctrl+J** | Reload the current level (un-stick a player stuck on loading) |
-| **Ctrl+K** | Switch to the previous level *(test tool)* |
-| **Ctrl+L** | Switch to the next level *(test tool)* |
+| **Ctrl+K** | Previous level *(test tool; disabled by default in release)* |
+| **Ctrl+L** | Next level *(test tool; disabled by default in release)* |
 | **Ctrl+O** | Probe the elevator (READ-ONLY: logs gate values + box geometry) |
 | **Ctrl+P** | Teleport all players into the elevator (for 7+ level transitions) |
+
+`Ctrl+K`/`Ctrl+L` are present in the code but disabled by default in the release
+config (`ENABLE_LEVEL_TEST_KEYS=false`) because they bypass normal objectives. Turn
+them on only for diagnostics.
 
 A wrong-floor player is also **auto-gathered on normal level entry** (settling-gated,
 outlier-only — it won't yank someone who walked off on purpose).
@@ -61,9 +65,11 @@ This installer checks those exist before it does anything.
 7-player sessions can lag because the game's voice chat logs a per-frame "underrun"
 warning that floods `BET.log` (seen at **76 MB / 405k lines**), and on a listen
 server that disk flood drops the host tick rate — raising latency for everyone.
-The bundled `config/Engine.ini` raises the log threshold for those noisy categories
-so they stop being written every frame. It changes logging only, not gameplay, and
-is reversible (the uninstaller restores your original). Details in
+The bundled `config/Engine.ini` raises the log threshold for the single worst
+category (`LogTriiodideVoiceChatSynth`) so the per-frame audio-synth underrun flood
+stops being written. Other voice channel logs remain visible so player-specific
+voice issues can still be diagnosed. It changes logging only, not gameplay, and is
+reversible (the uninstaller restores your original). Details in
 [`docs/performance_lag_diagnosis.md`](docs/performance_lag_diagnosis.md).
 
 ## Known issues
@@ -82,7 +88,7 @@ is reversible (the uninstaller restores your original). Details in
 - `tools/check_install.py` — verifies game files and checks for anti-cheat.
 - `tools/scan_bet_strings.py`, `tools/aob_scanner_v*.py` — research scanners.
 - `docs/` — findings, level structure, signatures, and the lag diagnosis.
-- `CHANGELOG.md` — full version history (currently **v2.12**).
+- `CHANGELOG.md` — full version history (currently **v2.13**).
 
 ## Safety
 

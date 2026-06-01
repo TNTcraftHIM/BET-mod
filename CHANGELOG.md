@@ -2,6 +2,56 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.13-audit-hardening (2026-05-31)
+
+Release audit pass + voice-failure investigation prep. This pass intentionally reduces
+release risk more than it adds features.
+
+### Code/release hardening
+
+- **Fixed a CDO/live-instance bug in the player-cap widget override.** `apply_overrides()`
+  was still using `FindFirstOf(wclass)` directly, bypassing the CDO filter that the rest
+  of the mod relies on. It now uses `find_first_instance(wclass)` so it writes only to a
+  real live widget instance, not `Default__` archetypes/stale objects.
+- **Added explicit host/listen-server guards** for host-only actions (`Ctrl+G` gather,
+  `Ctrl+J` reload, `Ctrl+O` probe, `Ctrl+P` board elevator, and diagnostic level-switch
+  functions). Non-host clients now log a clear refusal instead of doing confusing local-only
+  operations or no-ops. Authority detection uses the standard Unreal fact that only the
+  server/listen-host owns a live GameMode; CDO-safe `find_first_instance` avoids false host
+  positives.
+- **Release defaults now disable risky/debug-heavy features:**
+  - `ENABLE_LEVEL_TEST_KEYS=false` disables Ctrl+K/Ctrl+L previous/next level jumps by
+    default (they bypass objectives and are for diagnostics only).
+  - `ENABLE_PERIODIC_DIAG=false` disables the periodic 30s player-position diagnostic loop
+    after spawn repair is done, reducing reflection/logging during normal play.
+- **Installer hardened:** now copies from an allowlist (`enabled.txt`, `README.md`,
+  `Scripts/main.lua`) rather than recursively copying any stray logs/backups; removes the
+  old installed mod folder before copying so deleted/renamed files cannot survive an upgrade;
+  stores structured `mods.txt` state in the manifest and restores it on uninstall; detects
+  an already-current `Engine.ini` instead of backing up an identical file.
+- **Engine.ini suppression narrowed:** only `LogTriiodideVoiceChatSynth=Error` is active by
+  default. Broader voice categories are left visible so player-specific voice-room/RTC
+  diagnostics are not hidden; optional extra suppressions remain commented out.
+
+Validation: Lua opener/end balance `255 == 255`; installer `py_compile` passed.
+
+### Voice issue investigation: FREEZE / 烤面筋
+
+Host log evidence says both affected players join gameplay normally, but do **not** appear
+as normal EOS RTC voice-room participants from the host's point of view:
+
+- FREEZE maps to PUID `0002936e64b647b1be3980ccf837bad3`.
+- 烤面筋 maps to PUID `000227f8d6cb4cbd9c418a9fd5bb1995`.
+- Both have gameplay login/join success and `ResolveOwnerProductUserId` voice-synth owner
+  resolution, but unlike healthy/underrunning players they do not show convincing
+  `SetPlayerVolume` / `RTCAudio UpdatedParticipantState subscribed=[Yes]` evidence as voice
+  participants on the host.
+
+Conclusion: this is **not** the same as the voice underrun/log-flood problem. It looks more
+like per-client EOS RTC voice join/admission/signaling, high-player-count voice routing, or
+client network/firewall/VPN/account state. Decisive next evidence requires the affected
+players' own `BET.log` files around join time; see the response plan / docs for search terms.
+
 ## v2.12.0 — release prep (2026-05-31)
 
 First packaged release. No gameplay/logic change to the mod from v2.12-rebind;

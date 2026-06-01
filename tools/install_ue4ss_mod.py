@@ -77,60 +77,95 @@ def verify_ue4ss(p: dict[str, Path]) -> list[str]:
     return problems
 
 
-def copy_tree(source: Path, target: Path) -> list[str]:
+MOD_FILES = [
+    Path("enabled.txt"),
+    Path("README.md"),
+    Path("Scripts") / "main.lua",
+]
+
+
+def copy_mod_files(source: Path, target: Path) -> list[str]:
+    """Copy only the known release files; never ship logs/caches/backups by accident."""
     copied: list[str] = []
-    for path in source.rglob("*"):
-        relative = path.relative_to(source)
-        destination = target / relative
-        if path.is_dir():
-            destination.mkdir(parents=True, exist_ok=True)
-            continue
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, destination)
+    for relative in MOD_FILES:
+        src = source / relative
+        if not src.is_file():
+            raise SystemExit(f"Missing required mod file: {src}")
+        dst = target / relative
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
         copied.append(str(relative).replace("\\", "/"))
     return copied
 
 
-def enable_in_mods_txt(mods_txt: Path) -> str:
-    """Ensure 'BETPlayerCap : 1' is present. Returns the prior state token:
-    'added', 'already-enabled', 'flipped-from-0', or 'no-file'."""
+def read_mods_txt(mods_txt: Path) -> list[str]:
     if not mods_txt.is_file():
-        return "no-file"
-    lines = mods_txt.read_text(encoding="utf-8").splitlines()
+        return []
+    return mods_txt.read_text(encoding="utf-8").splitlines()
+
+
+def write_mods_txt(mods_txt: Path, lines: list[str]) -> None:
+    mods_txt.parent.mkdir(parents=True, exist_ok=True)
+    mods_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def find_mod_line(lines: list[str]) -> int | None:
     for i, line in enumerate(lines):
         stripped = line.strip()
         if stripped.lower().startswith(MOD_NAME.lower()) and ":" in stripped:
             key = stripped.split(":", 1)[0].strip()
             if key.lower() == MOD_NAME.lower():
-                val = stripped.split(":", 1)[1].strip()
-                if val == "1":
-                    return "already-enabled"
-                lines[i] = f"{MOD_NAME} : 1"
-                mods_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
-                return "flipped-from-0"
-    # Not present: insert before the "Built-in keybinds" comment if found, else append.
+                return i
+    return None
+
+
+def enable_in_mods_txt(mods_txt: Path) -> dict:
+    """Ensure 'BETPlayerCap : 1' is present and record prior state for uninstall."""
+    lines = read_mods_txt(mods_txt)
+    record = {"path": str(mods_txt), "before": None, "action": "no-file" if not lines else "none"}
+    idx = find_mod_line(lines)
+    if idx is not None:
+        record["before"] = lines[idx]
+        if lines[idx].strip().endswith(": 1") or lines[idx].split(":", 1)[1].strip() == "1":
+            record["action"] = "already-enabled"
+        else:
+            lines[idx] = f"{MOD_NAME} : 1"
+            record["action"] = "flipped-to-enabled"
+            write_mods_txt(mods_txt, lines)
+        return record
+
     insert_at = len(lines)
     for i, line in enumerate(lines):
         if "Built-in keybinds" in line or line.strip().lower().startswith("keybinds"):
             insert_at = i
             break
     lines.insert(insert_at, f"{MOD_NAME} : 1")
-    mods_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return "added"
+    record["action"] = "added"
+    write_mods_txt(mods_txt, lines)
+    return record
 
 
-def disable_in_mods_txt(mods_txt: Path) -> None:
-    if not mods_txt.is_file():
+def restore_mods_txt(record: dict | None) -> None:
+    if not record:
         return
-    lines = mods_txt.read_text(encoding="utf-8").splitlines()
-    out = []
-    for line in lines:
-        s = line.strip()
-        if s.lower().startswith(MOD_NAME.lower()) and ":" in s \
-                and s.split(":", 1)[0].strip().lower() == MOD_NAME.lower():
-            continue  # drop our line
-        out.append(line)
-    mods_txt.write_text("\n".join(out) + "\n", encoding="utf-8")
+    mods_txt = Path(record.get("path", ""))
+    if not mods_txt.name or not mods_txt.exists():
+        return
+    lines = read_mods_txt(mods_txt)
+    idx = find_mod_line(lines)
+    before = record.get("before")
+    action = record.get("action")
+    if before:
+        if idx is not None:
+            lines[idx] = before
+        else:
+            lines.append(before)
+    elif action == "added" and idx is not None:
+        lines.pop(idx)
+    elif idx is not None:
+        # If we did not add or change the line (already-enabled), leave it alone.
+        pass
+    write_mods_txt(mods_txt, lines)
 
 
 def install_engine_ini() -> dict:
@@ -142,7 +177,12 @@ def install_engine_ini() -> dict:
         record["action"] = "source-missing"
         return record
     target.parent.mkdir(parents=True, exist_ok=True)
+    source_text = SOURCE_ENGINE_INI.read_text(encoding="utf-8", errors="replace")
     if target.exists():
+        target_text = target.read_text(encoding="utf-8", errors="replace")
+        if target_text == source_text:
+            record["action"] = "already-current"
+            return record
         backup = target.with_suffix(".ini.bak_betcap")
         if not backup.exists():
             shutil.copy2(target, backup)
@@ -183,9 +223,11 @@ def install(game_root: Path) -> None:
         raise SystemExit(1)
 
     target = p["target_mod"]
+    if target.exists():
+        shutil.rmtree(target)
     target.mkdir(parents=True, exist_ok=True)
-    copied = copy_tree(SOURCE_MOD_DIR, target)
-    mods_txt_state = enable_in_mods_txt(p["mods_txt"])
+    copied = copy_mod_files(SOURCE_MOD_DIR, target)
+    mods_txt_record = enable_in_mods_txt(p["mods_txt"])
     engine_record = install_engine_ini()
 
     manifest = {
@@ -194,19 +236,19 @@ def install(game_root: Path) -> None:
         "target": str(target),
         "installed_at": datetime.now().isoformat(timespec="seconds"),
         "files": copied,
-        "mods_txt": str(p["mods_txt"]),
-        "mods_txt_state": mods_txt_state,
+        "mods_txt": mods_txt_record,
         "engine_ini": engine_record,
     }
     (target / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     print(f"Installed {MOD_NAME} -> {target}  ({len(copied)} files)")
-    print(f"mods.txt: {mods_txt_state}  ({p['mods_txt']})")
+    print(f"mods.txt: {mods_txt_record['action']}  ({p['mods_txt']})")
     print(f"Engine.ini (anti-lag): {engine_record['action']}  ({engine_record['path']})")
     print()
     print("Done. Launch the game through Steam. The mod runs on the HOST only.")
-    print("Host keybinds: Ctrl+G gather | Ctrl+J reload | Ctrl+K/L prev/next level "
-          "| Ctrl+O elevator probe | Ctrl+P board elevator")
+    print("Host keybinds: Ctrl+G gather | Ctrl+J reload | Ctrl+O elevator probe "
+          "| Ctrl+P board elevator")
+    print("Release build disables Ctrl+K/L level-test keys by default; see main.lua toggles.")
 
 
 def uninstall(game_root: Path) -> None:
@@ -223,9 +265,10 @@ def uninstall(game_root: Path) -> None:
     # Restore Engine.ini from the manifest record if we have one.
     if manifest:
         restore_engine_ini(manifest.get("engine_ini"))
-
-    disable_in_mods_txt(p["mods_txt"])
-    print(f"Disabled {MOD_NAME} in mods.txt")
+        restore_mods_txt(manifest.get("mods_txt"))
+        print(f"Restored {MOD_NAME} mods.txt state")
+    else:
+        print("No install manifest found; leaving mods.txt/Engine.ini untouched")
 
     if target.exists():
         shutil.rmtree(target)

@@ -43,17 +43,18 @@ class dump), so this can't be retuned from local config.
 ## Mitigation applied (reversible)
 
 Created `%LOCALAPPDATA%/BET/Saved/Config/Windows/Engine.ini` (a copy is kept here as
-`config/Engine.ini`) that raises the log threshold for the noisy categories so they
-stop being written every frame:
+`config/Engine.ini`) that raises the log threshold for the single worst flood
+category:
 
 ```ini
 [Core.Log]
 LogTriiodideVoiceChatSynth=Error
-LogTriiodideVoiceChat=Error
-LogBETVoice=Error
-LogEOSVoiceChat=Error
-LogNetPlayerMovement=Error
 ```
+
+The config file also contains commented-out optional suppressions for other voice/net
+categories. They are deliberately **disabled by default** so `LogBETVoice`,
+`LogEOSVoiceChat`, and `LogTriiodideVoiceChat` Join/Subscribe diagnostics remain
+visible when debugging player-specific voice failures.
 
 This removes the **logging amplifier** (the per-frame disk flood) without touching
 gameplay, audio, or netcode. The underrun itself is unchanged — it's a network /
