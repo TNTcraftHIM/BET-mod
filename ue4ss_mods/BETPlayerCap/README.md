@@ -22,15 +22,18 @@ need it installed — they just join the host's lobby.
 |-----|--------|
 | **Ctrl+G** | Gather all players to the host (manual, anytime) |
 | **Ctrl+J** | Reload the current level (un-stick a player stuck on loading) |
-| **Ctrl+K** | Previous level *(test tool; disabled by default in release)* |
-| **Ctrl+L** | Next level *(test tool; disabled by default in release)* |
+| **Ctrl+K** | Previous level |
+| **Ctrl+L** | Next level |
 | **Ctrl+O** | Probe the elevator (READ-ONLY: logs gate values + box geometry) |
 | **Ctrl+P** | Teleport all players into the elevator (for 7+ level transitions) |
+| **Ctrl+Arrows** | Noclip-nudge the host (camera-relative: ↑ forward, ↓ back, ←/→ strafe) |
+| **Ctrl+PageUp/Down** | Noclip-nudge the host up / down (Z axis) |
 
 `Ctrl+K`/`Ctrl+L` jump straight to a map and bypass the lobby/ending-path, so level
-objectives may not initialize — they are travel/spawn **test tools**, not a normal
-way to progress. They are disabled in the release config; set
-`ENABLE_LEVEL_TEST_KEYS = true` in `Scripts/main.lua` only when doing diagnostics.
+objectives may not initialize. `Ctrl+Arrows` / `Ctrl+PageUp/Down` move the host in
+small no-collision steps (~100u/press, camera-relative horizontally) — a cheat to
+get the host past a spot a 7+ player run can't pass normally. They ignore walls, so
+tap carefully near ledges. All of these are host-only.
 
 ## Install
 

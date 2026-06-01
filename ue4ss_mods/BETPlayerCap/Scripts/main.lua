@@ -1,10 +1,10 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.13-audit-hardening"
+local VERSION = "2.14-nudge"
 
--- Release-mode toggles. Keep risky/debug-heavy helpers OFF by default for public
--- release; turn them on locally when doing diagnostics.
-local ENABLE_LEVEL_TEST_KEYS = false    -- Ctrl+K/L prev/next level (bypasses objectives)
+-- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
+-- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
+local ENABLE_LEVEL_TEST_KEYS = true     -- Ctrl+K/L prev/next level
 local ENABLE_PERIODIC_DIAG   = false    -- 30s player-position diagnostics after spawn fix
 
 -- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
@@ -303,6 +303,14 @@ local FIX_MAX_TICKS = 8      -- only attempt fix within this many ticks of level
                              -- (after that, a far player likely WENT to Neg1 legitimately)
 local last_median_z = nil
 local settled_reads = 0
+
+-- v2.14 host noclip-nudge: step size per Ctrl+Arrow / Ctrl+PageUp-Down keypress.
+-- teleport_pawn snaps with bSweep=false,bTeleport=true (no collision sweep), so a
+-- nudge can push the host THROUGH geometry — used to cheat past a spot where a
+-- 7+ player count can't progress normally. Horizontal is CAMERA-RELATIVE (forward =
+-- where you look), computed from control-rotation yaw. Keep small to stay on-tile.
+local NUDGE_STEP   = 100   -- horizontal world units per Ctrl+Arrow
+local NUDGE_STEP_Z = 100   -- vertical world units per Ctrl+PageUp/PageDown
 
 -- v2.8 post-travel summon timing. The 2026-05-31 7-player level-switch test showed
 -- the OLD post-travel summon firing too early: right after Ctrl+H it tried to gather
@@ -1001,6 +1009,77 @@ local function ensure_board_keybind()
     end
 end
 
+-- HOST NOCLIP NUDGE (v2.14): snap the HOST pawn a small step to cheat past a spot
+-- where a 7+ player count can't progress (stuck geometry, an objective gated on
+-- fewer players, etc). Reuses the verified replicating teleport (bSweep=false,
+-- bTeleport=true + ForceNetUpdate) so it ignores collision (noclip) and the new
+-- spot reaches clients exactly like Ctrl+G / Ctrl+P. Host-only.
+--   forward/right are CAMERA-RELATIVE: computed from the controller's yaw so
+--   "forward" is where the host is looking (flattened to horizontal). Z is world.
+-- Read the host's control yaw (degrees). Falls back to actor yaw, then 0.
+local function get_host_yaw()
+    local pawn = get_host_pawn()
+    if not pawn then return nil, nil end
+    local yaw = safe("NudgeYaw_ctrl", function()
+        local c = pawn.Controller
+        if c and c:IsValid() then
+            local r = c:GetControlRotation()
+            if r and r.Yaw then return r.Yaw end
+        end
+        return nil
+    end)
+    if not yaw then
+        yaw = safe("NudgeYaw_actor", function()
+            local r = pawn:K2_GetActorRotation()
+            if r and r.Yaw then return r.Yaw end
+            return nil
+        end)
+    end
+    return pawn, yaw
+end
+
+-- diry/dirx in {-1,0,1}: forward(+1)/back(-1) and right(+1)/left(-1); dz world units.
+local function nudge_host(forward, right, dz)
+    if not require_host("Ctrl+Arrow nudge") then return end
+    local pawn, yaw = get_host_yaw()
+    if not pawn then log("[NUDGE] Could not resolve host pawn - aborting"); return end
+    local cur = get_actor_pos(pawn, "NudgeCur")
+    if not cur or not cur.Z then log("[NUDGE] Could not read host position - aborting"); return end
+    local dx, dy = 0, 0
+    if (forward ~= 0 or right ~= 0) then
+        local rad = (yaw or 0) * math.pi / 180.0
+        local fx, fy = math.cos(rad), math.sin(rad)   -- horizontal forward unit
+        -- right = forward rotated +90deg in UE's left-handed yaw
+        local rx, ry = -math.sin(rad), math.cos(rad)
+        dx = (fx * forward + rx * right) * NUDGE_STEP
+        dy = (fy * forward + ry * right) * NUDGE_STEP
+    end
+    local dest = {X = cur.X + dx, Y = cur.Y + dy, Z = cur.Z + (dz or 0)}
+    local ok = teleport_pawn(pawn, dest, "NUDGE")
+    log(string.format("[NUDGE] fwd=%d right=%d dz=%d -> (%.0f,%.0f,%.0f) %s",
+        forward, right, dz or 0, dest.X, dest.Y, dest.Z, ok and "ok" or "UNVERIFIED"))
+end
+
+local nudge_bound = false
+local function ensure_nudge_keybind()
+    if nudge_bound then return end
+    local ok = pcall(function()
+        RegisterKeyBind(Key.UP_ARROW,    {ModifierKey.CONTROL}, function() ExecuteInGameThread(function() pcall(nudge_host,  1, 0, 0) end) end)
+        RegisterKeyBind(Key.DOWN_ARROW,  {ModifierKey.CONTROL}, function() ExecuteInGameThread(function() pcall(nudge_host, -1, 0, 0) end) end)
+        RegisterKeyBind(Key.RIGHT_ARROW, {ModifierKey.CONTROL}, function() ExecuteInGameThread(function() pcall(nudge_host, 0,  1, 0) end) end)
+        RegisterKeyBind(Key.LEFT_ARROW,  {ModifierKey.CONTROL}, function() ExecuteInGameThread(function() pcall(nudge_host, 0, -1, 0) end) end)
+        RegisterKeyBind(Key.PAGE_UP,     {ModifierKey.CONTROL}, function() ExecuteInGameThread(function() pcall(nudge_host, 0, 0,  NUDGE_STEP_Z) end) end)
+        RegisterKeyBind(Key.PAGE_DOWN,   {ModifierKey.CONTROL}, function() ExecuteInGameThread(function() pcall(nudge_host, 0, 0, -NUDGE_STEP_Z) end) end)
+    end)
+    if ok then
+        nudge_bound = true
+        log("[NUDGE] Host keybinds: Ctrl+Arrows = noclip move " .. NUDGE_STEP
+            .. "u (camera-relative), Ctrl+PageUp/Down = " .. NUDGE_STEP_Z .. "u (Z)")
+    else
+        log("[NUDGE] RegisterKeyBind failed — nudge keybinds unavailable")
+    end
+end
+
 -- RELATIVE cluster-outlier teleport. Target = the HOST pawn's live position
 -- (level-independent), falling back to the majority-cluster median only if the
 -- host can't be resolved or the host is itself the outlier.
@@ -1122,6 +1201,7 @@ local function run_monitor()
             ensure_reload_keybind()
             ensure_probe_keybind()
             ensure_board_keybind()
+            ensure_nudge_keybind()
         else
             return
         end
@@ -1204,4 +1284,5 @@ log("[LEVELSW] Ctrl+K/L level-test keys are disabled by default; set ENABLE_LEVE
 log("[RELOAD] Host keybind Ctrl+J (reload current level, un-stick loading) will arm once in a real level")
 log("[PROBE] Host keybind Ctrl+O (read elevator gate, READ-ONLY probe/detect) will arm once in a real level")
 log("[BOARD] Host keybind Ctrl+P (teleport all players into elevator) will arm once in a real level")
+log("[NUDGE] Host keybinds Ctrl+Arrows (noclip move) / Ctrl+PageUp-Down (Z) will arm once in a real level")
 log("[ADAPT] UEHelpers " .. (UEHelpers and "loaded" or "NOT FOUND — host-anchor disabled, will use cluster median"))

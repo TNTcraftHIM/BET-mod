@@ -2,6 +2,37 @@
 
 All notable changes to the BETPlayerCap UE4SS mod and the surrounding research workspace.
 
+## v2.14-nudge (2026-06-01)
+
+### Ctrl+Arrow noclip nudge + Ctrl+K/L are normal features again
+
+- **New host keybinds: Ctrl+Arrows / Ctrl+PageUp-Down = noclip-nudge the host.**
+  Snaps the host pawn a small (~100u) step with no collision, to cheat past a spot
+  a 7+ player run can't pass normally (stuck geometry, a player-count-gated section).
+  Horizontal is **camera-relative** — computed from the controller's yaw, so Ctrl+Up
+  = where the host is looking (flattened to horizontal), Ctrl+Down = back, Ctrl+Left/
+  Right = strafe. Ctrl+PageUp/PageDown move ±Z in world space. Reuses the verified
+  replicating teleport (`teleport_pawn`: `bSweep=false, bTeleport=true` + `ForceNetUpdate`),
+  so it ignores walls and the new position reaches clients exactly like Ctrl+G/Ctrl+P.
+  Host-only (guarded by `require_host`). Key names verified against this build's
+  UE4SS valid-keys list (`UP_ARROW`/`DOWN_ARROW`/`LEFT_ARROW`/`RIGHT_ARROW`/`PAGE_UP`/
+  `PAGE_DOWN`). Logs `[NUDGE]` lines. Caveat: presses accumulate and ignore collision,
+  so repeated taps toward a ledge can walk the host off it — tap carefully.
+- **Ctrl+K / Ctrl+L are normal user features again** (`ENABLE_LEVEL_TEST_KEYS=true`).
+  The v2.13 audit had defaulted them off as "test tools"; per user direction they are
+  ordinary level prev/next controls and are enabled by default. `ENABLE_PERIODIC_DIAG`
+  stays off (pure diagnostics).
+
+### Voice issue (FREEZE / 烤面筋): confirmed NOT mod-related
+
+User confirmed the two players' voice failure also happens **without the mod
+installed**, so it is a base-game / EOS RTC / client-network issue, not anything this
+mod does. Removed from the mod's todo; kept the diagnostic notes for the players' own
+logs in `bet_multiplayer_lag_voicechat` memory for reference only.
+
+Validation: Lua opener/end balance `284 == 284`; 12 keybinds registered with no
+collisions (G/J/K/L/O/P + 6 arrow/page binds).
+
 ## v2.13-audit-hardening (2026-05-31)
 
 Release audit pass + voice-failure investigation prep. This pass intentionally reduces

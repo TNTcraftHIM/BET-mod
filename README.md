@@ -20,14 +20,16 @@ for level transitions.
 |-----|--------|
 | **Ctrl+G** | Gather all players to the host (manual, anytime) |
 | **Ctrl+J** | Reload the current level (un-stick a player stuck on loading) |
-| **Ctrl+K** | Previous level *(test tool; disabled by default in release)* |
-| **Ctrl+L** | Next level *(test tool; disabled by default in release)* |
+| **Ctrl+K** | Previous level |
+| **Ctrl+L** | Next level |
 | **Ctrl+O** | Probe the elevator (READ-ONLY: logs gate values + box geometry) |
 | **Ctrl+P** | Teleport all players into the elevator (for 7+ level transitions) |
+| **Ctrl+Arrows** | Noclip-nudge the host (camera-relative: ↑ forward, ↓ back, ←/→ strafe) |
+| **Ctrl+PageUp/Down** | Noclip-nudge the host up / down (Z axis) |
 
-`Ctrl+K`/`Ctrl+L` are present in the code but disabled by default in the release
-config (`ENABLE_LEVEL_TEST_KEYS=false`) because they bypass normal objectives. Turn
-them on only for diagnostics.
+`Ctrl+Arrows` / `Ctrl+PageUp/Down` move the host in small no-collision steps —
+a cheat to get past a spot a 7+ player run can't pass normally. Each press steps
+~100 units and ignores walls, so tap carefully near ledges.
 
 A wrong-floor player is also **auto-gathered on normal level entry** (settling-gated,
 outlier-only — it won't yank someone who walked off on purpose).
@@ -88,7 +90,7 @@ reversible (the uninstaller restores your original). Details in
 - `tools/check_install.py` — verifies game files and checks for anti-cheat.
 - `tools/scan_bet_strings.py`, `tools/aob_scanner_v*.py` — research scanners.
 - `docs/` — findings, level structure, signatures, and the lag diagnosis.
-- `CHANGELOG.md` — full version history (currently **v2.13**).
+- `CHANGELOG.md` — full version history (currently **v2.14**).
 
 ## Safety
 
