@@ -1,5 +1,5 @@
 param(
-    [string]$GameRoot = "F:\Steam\steamapps\common\Backrooms_Escape_Together",
+    [string]$GameRoot = $(if ($env:BET_GAME_ROOT) { $env:BET_GAME_ROOT } else { "F:\Steam\steamapps\common\Backrooms_Escape_Together" }),
     [string]$Version = "v2.14"
 )
 $ErrorActionPreference = 'Stop'
@@ -20,17 +20,11 @@ New-Item -ItemType Directory -Force -Path (Join-Path $PayloadWin64 'ue4ss\Mods')
 New-Item -ItemType Directory -Force -Path $PayloadConfig | Out-Null
 New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 
-$topDlls = @(
-  'dwmapi.dll',
-  'boost_atomic-mt-x64.dll','boost_chrono-mt-x64.dll','boost_filesystem-mt-x64.dll',
-  'boost_iostreams-mt-x64.dll','boost_program_options-mt-x64.dll','boost_python311-mt-x64.dll',
-  'boost_regex-mt-x64.dll','boost_system-mt-x64.dll','boost_thread-mt-x64.dll',
-  'tbb12.dll','tbbmalloc.dll'
-)
-foreach ($f in $topDlls) {
-    $src = Join-Path $Win64 $f
-    if (Test-Path $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $PayloadWin64 $f) -Force }
-}
+# Only the UE4SS proxy loader. The boost_*/tbb* DLLs in the game's Win64 are the
+# GAME's own runtime (they ship with the install and every player already has them);
+# UE4SS 3.x is self-contained and does not need them. Bundling them is unnecessary
+# and would overwrite each player's game files, so they are intentionally excluded.
+Copy-Item -LiteralPath (Join-Path $Win64 'dwmapi.dll') -Destination (Join-Path $PayloadWin64 'dwmapi.dll') -Force
 
 $ue4ss = Join-Path $PayloadWin64 'ue4ss'
 New-Item -ItemType Directory -Force -Path $ue4ss | Out-Null
@@ -62,6 +56,7 @@ Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\uninstall.bat') -
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\install.ps1') -Destination (Join-Path $OutRoot 'install.ps1') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\uninstall.ps1') -Destination (Join-Path $OutRoot 'uninstall.ps1') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\README_INSTALL.txt') -Destination (Join-Path $OutRoot 'README_INSTALL.txt') -Force
+Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\README_INSTALL.zh-CN.txt') -Destination (Join-Path $OutRoot 'README_INSTALL.zh-CN.txt') -Force
 
 Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path $OutRoot -DestinationPath $ZipPath -Force

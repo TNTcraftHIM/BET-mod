@@ -1,5 +1,7 @@
 # BET Player Cap Mod
 
+**English** | [中文](README.zh-CN.md)
+
 A Windows UE4SS mod package for **Backrooms: Escape Together** that lets a private
 lobby host play with more than the default 6 players (target cap: **12**) and adds
 host tools for the main 7+ player pain points: gathering separated players, reloading
@@ -31,17 +33,20 @@ UEHelpers support files, an anti-lag `Engine.ini`, and no-Python install/uninsta
 scripts.
 
 1. Close the game.
-2. Extract the zip anywhere.
-3. Double-click `install.bat`.
-   - Default game path: `F:\Steam\steamapps\common\Backrooms_Escape_Together`
-   - If your game is elsewhere, drag the game root folder onto `install.bat`, or run:
-     ```bat
-     install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
-     ```
+2. **Recommended:** extract the zip directly **into your game folder**
+   (`…\steamapps\common\Backrooms_Escape_Together`), then double-click `install.bat`.
+   It detects the game folder from where it was extracted automatically.
+3. If you extracted it somewhere else, `install.bat` opens a folder picker — select your
+   `Backrooms_Escape_Together` folder. You can also pass it explicitly:
+   ```bat
+   install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
+   ```
 4. Launch through Steam and host a private lobby.
 
-Uninstall with `uninstall.bat` from the same extracted folder. The installer records
-what it changed and restores backups where possible.
+To find the game folder in Steam: right-click the game → **Manage → Browse local files**.
+
+Uninstall with `uninstall.bat` from the same folder. The installer records what it changed
+and restores backups where possible.
 
 ## Host keybinds
 
@@ -106,7 +111,7 @@ python tools\install_ue4ss_mod.py install --game-root "D:\SteamLibrary\steamapps
 
 ## Repository layout
 
-- `dist/` — ready-to-share full release zip.
+- `dist/` — built release zip (gitignored) plus its tracked `.sha256` checksum.
 - `ue4ss_mods/BETPlayerCap/` — Lua mod source.
 - `config/Engine.ini` — anti-lag log-suppression config used by installers.
 - `tools/` — source/developer install, release-build, and check helpers.

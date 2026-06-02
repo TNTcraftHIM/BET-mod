@@ -1,10 +1,12 @@
 # Documentation
 
+**English** | [中文](README.zh-CN.md)
+
 Start here if you are not developing the mod:
 
-- [User guide](USER_GUIDE.md) — install, uninstall, changed files, logs for bug reports.
-- [Compatibility](COMPATIBILITY.md) — tested version and what to do after game updates.
-- [Troubleshooting](troubleshooting/README.md) — common runtime issues.
+- [User guide](USER_GUIDE.md) ([中文](USER_GUIDE.zh-CN.md)) — install, uninstall, changed files, logs for bug reports.
+- [Compatibility](COMPATIBILITY.md) ([中文](COMPATIBILITY.zh-CN.md)) — tested version and what to do after game updates.
+- [Troubleshooting](troubleshooting/README.md) ([中文](troubleshooting/README.zh-CN.md)) — common runtime issues.
 
 Developer / research material:
 

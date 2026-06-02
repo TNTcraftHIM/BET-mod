@@ -1,5 +1,7 @@
 # User guide
 
+**English** | [中文](USER_GUIDE.zh-CN.md)
+
 ## Supported package
 
 Current public package: **BETPlayerCap v2.14 full Windows package**.
@@ -19,8 +21,8 @@ In Steam:
 2. Choose **Manage > Browse local files**.
 3. The folder that opens should be `Backrooms_Escape_Together`.
 
-If the installer cannot find the default path, drag that `Backrooms_Escape_Together` folder
-onto `install.bat`, or run:
+If the installer cannot detect the game folder, it opens a folder picker. Select that
+`Backrooms_Escape_Together` folder, or run:
 
 ```bat
 install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
@@ -30,8 +32,11 @@ install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
 
 1. Close the game.
 2. Download the full release zip from GitHub Releases.
-3. Extract it.
-4. Run `install.bat`.
+3. **Recommended:** extract it into your game folder
+   (`…\steamapps\common\Backrooms_Escape_Together`), then run `install.bat`. It detects the
+   game folder automatically from where it was extracted.
+4. If you extracted elsewhere, `install.bat` opens a folder picker — select your
+   `Backrooms_Escape_Together` folder (or pass it as an argument).
 5. Launch the game through Steam.
 
 ## Uninstall

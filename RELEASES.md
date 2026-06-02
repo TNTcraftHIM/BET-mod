@@ -1,5 +1,7 @@
 # Releases
 
+**English** | [中文](RELEASES.zh-CN.md)
+
 The full Windows package is published as a GitHub Release asset:
 
 - `BETPlayerCap-v2.14-full.zip`

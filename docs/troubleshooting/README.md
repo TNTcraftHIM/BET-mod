@@ -1,5 +1,7 @@
 # Troubleshooting
 
+**English** | [中文](README.zh-CN.md)
+
 ## Player stuck on loading
 
 Use **Ctrl+J** on the host to reload the current level. This re-runs the game's seamless

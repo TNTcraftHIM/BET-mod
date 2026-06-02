@@ -1,5 +1,6 @@
 BETPlayerCap v2.14 FULL WINDOWS PACKAGE
 =======================================
+[ English (this file) | 中文: README_INSTALL.zh-CN.txt ]
 
 Download this package only from the project GitHub release page.
 
@@ -14,24 +15,23 @@ WHAT THIS INSTALLS
 INSTALL
 -------
 1. Close the game.
-2. Extract the whole zip anywhere.
-3. Double-click install.bat.
+2. RECOMMENDED: extract this whole zip into your game folder
+   (...\steamapps\common\Backrooms_Escape_Together), then double-click install.bat.
+   The installer finds the game folder automatically from where it was extracted.
+3. If you extracted somewhere else, install.bat opens a folder picker. Select your
+   Backrooms_Escape_Together folder. You can also run:
+     install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
 4. Launch the game through Steam.
 5. Only the HOST needs the package. Friends/clients can join normally.
 
-If the installer cannot find your game, find it in Steam:
+To find the game folder in Steam:
   Steam > Library > Backrooms: Escape Together > Manage > Browse local files
-Then drag the Backrooms_Escape_Together folder onto install.bat, or run:
-  install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
 
 UNINSTALL / RESTORE
 -------------------
-Run uninstall.bat from this extracted folder.
-If you installed to a non-default game path, pass the same game root:
-  uninstall.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
-
-The uninstaller uses the backup manifest created during install. It restores files that
-already existed and removes files that were created by the package.
+Run uninstall.bat from the same folder. It auto-detects the install (or opens a folder
+picker) and uses the backup manifest created during install to restore files that already
+existed and remove files that were created by the package.
 
 HOST KEYBINDS
 -------------

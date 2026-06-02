@@ -1,5 +1,7 @@
 # Compatibility
 
+**English** | [中文](COMPATIBILITY.zh-CN.md)
+
 ## Tested target
 
 BETPlayerCap v2.14 was built and tested against the Steam Windows build of
