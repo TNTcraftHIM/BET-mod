@@ -3,7 +3,7 @@
 **English** | [中文](README.zh-CN.md)
 
 A Windows UE4SS mod package for **Backrooms: Escape Together** that lets a private
-lobby host play with more than the default 6 players (target cap: **12**) and adds
+lobby host play with more than the default 6 players (target cap: **16**) and adds
 host tools for the main 7+ player pain points: gathering separated players, reloading
 a stuck level, boarding elevators, capping known player-scaled pass requirements at
 6, and nudging through geometry when a level was not built for that many bodies.

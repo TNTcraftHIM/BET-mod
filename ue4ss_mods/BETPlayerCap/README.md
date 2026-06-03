@@ -9,7 +9,7 @@ need it installed — they just join the host's lobby.
 
 ## What it does
 
-- **Raises the multiplayer player-count cap** (target 12) via the settings widget
+- **Raises the multiplayer player-count cap** (target 16) via the settings widget
   defaults, so the host can create a lobby for more than 6.
 - **Auto spawn-fix** on normal level entry: if a player spawns on the wrong floor
   (an outlier far from the group), they are teleported to the group. Settling-gated
