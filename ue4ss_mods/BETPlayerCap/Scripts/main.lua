@@ -1,8 +1,17 @@
 local MOD_NAME = "BETPlayerCap"
+-- =====================  USER CONFIG (edit these)  =====================
+-- TARGET_CAP: the lobby/session player cap the host can select in the menu.
+--   Default 12. Raise it for bigger lobbies (e.g. 16). NOTE: only 12 is tested.
+--   Higher values may hit the game's own EOS/session limits or worsen the known
+--   loading-race / voice-log lag. Raise in small steps and test.
 local TARGET_CAP = 12
+-- OBJECTIVE_CAP: cap for player-presence pass gates (e.g. elevator "players needed").
 local OBJECTIVE_CAP = 6
+-- GENERATOR_CAP / GENERIC_OBJECTIVE_CAP: cap for player-scaled objective counts
+--   (Level 1 generators, and any objective the game marks bScalesWithPlayers).
 local GENERATOR_CAP = 10
 local GENERIC_OBJECTIVE_CAP = 10
+-- ======================================================================
 local VERSION = "2.16.3-capfix"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).

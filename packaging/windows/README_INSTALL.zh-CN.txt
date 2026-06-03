@@ -27,6 +27,20 @@ BETPlayerCap v2.16.3 完整 WINDOWS 安装包
 在 Steam 里找到游戏目录：
   Steam > 库 > Backrooms: Escape Together > 管理 > 浏览本地文件
 
+该双击哪个文件
+--------------
+只需双击 install.bat（或 uninstall.bat），这是唯一需要你运行的文件。
+“betcap-installer.core.ps1” / “betcap-uninstaller.core.ps1” 是 .bat 自动调用的
+内部脚本，不要直接运行它们。
+
+修改人数上限（可选）
+--------------------
+默认房间上限为 12。要修改，请编辑下面文件顶部的 “USER CONFIG” 配置区：
+  <游戏根目录>\BET\Binaries\Win64\ue4ss\Mods\BETPlayerCap\Scripts\main.lua
+把  local TARGET_CAP = 12  改成你想要的数字，保存后重启游戏。
+目前只测试过 12。更高的值可能触及游戏自身的会话上限，或加重加载/语音卡顿，
+请小幅逐步提高并测试。
+
 卸载 / 还原
 -----------
 从同一文件夹运行 uninstall.bat。它会自动检测安装位置（或弹出文件夹选择窗口），

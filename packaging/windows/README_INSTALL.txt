@@ -27,6 +27,20 @@ INSTALL
 To find the game folder in Steam:
   Steam > Library > Backrooms: Escape Together > Manage > Browse local files
 
+WHICH FILE TO RUN
+-----------------
+Double-click install.bat (or uninstall.bat). That is the only file you run.
+The "betcap-installer.core.ps1" / "betcap-uninstaller.core.ps1" files are the
+internal scripts the .bat calls for you - do not run them directly.
+
+CHANGE THE PLAYER CAP (optional)
+--------------------------------
+Default lobby cap is 12. To change it, edit the top "USER CONFIG" block of:
+  <GameRoot>\BET\Binaries\Win64\ue4ss\Mods\BETPlayerCap\Scripts\main.lua
+Set  local TARGET_CAP = 12  to the number you want, save, and restart the game.
+Only 12 is tested. Higher values may hit the game's own session limits or worsen
+loading/voice lag - raise it in small steps and test.
+
 UNINSTALL / RESTORE
 -------------------
 Run uninstall.bat from the same folder. It auto-detects the install (or opens a folder

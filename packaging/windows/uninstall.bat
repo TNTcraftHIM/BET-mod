@@ -1,6 +1,6 @@
 @echo off
 setlocal
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0uninstall.ps1" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0betcap-uninstaller.core.ps1" %*
 if errorlevel 1 (
   echo.
   echo Uninstall failed. See messages above.

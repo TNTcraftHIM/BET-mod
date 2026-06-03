@@ -53,8 +53,11 @@ Keybinds : 1
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'config\Engine.ini') -Destination (Join-Path $PayloadConfig 'Engine.ini') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\install.bat') -Destination (Join-Path $OutRoot 'install.bat') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\uninstall.bat') -Destination (Join-Path $OutRoot 'uninstall.bat') -Force
-Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\install.ps1') -Destination (Join-Path $OutRoot 'install.ps1') -Force
-Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\uninstall.ps1') -Destination (Join-Path $OutRoot 'uninstall.ps1') -Force
+# The actual logic lives in .ps1 files with deliberately uncommon names so a user
+# with file extensions hidden can't mistake them for the .bat and double-click the
+# wrong one. The .bat files are the intended entry points and call these by name.
+Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\betcap-installer.core.ps1') -Destination (Join-Path $OutRoot 'betcap-installer.core.ps1') -Force
+Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\betcap-uninstaller.core.ps1') -Destination (Join-Path $OutRoot 'betcap-uninstaller.core.ps1') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\README_INSTALL.txt') -Destination (Join-Path $OutRoot 'README_INSTALL.txt') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'packaging\windows\README_INSTALL.zh-CN.txt') -Destination (Join-Path $OutRoot 'README_INSTALL.zh-CN.txt') -Force
 
