@@ -6,6 +6,30 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.16.4-cap16 (2026-06-03)
+
+- `TARGET_CAP` set to **16** — live-tested as the highest value that can still create
+  a lobby. 17+ fails session creation (an EOS-level limit the mod can't raise). The
+  objective/generator caps are unchanged.
+- Documented (from the game's own class dump) which systems scale with player count,
+  to answer "do supplies / monsters increase with more players?":
+  - **Loot / item supply — partly player-scaled.** Level 3 repair-item spawning is
+    player-scaled via `ALevel3ChunkManager.PlayerCountToWireCurve` and
+    `PlayerCountToRepairItemMultiplier`; Level 3 fuse requirement via
+    `AFuseBoard.PlayerCountFuseCurve`. The global `UBETLootManagerComponent` only
+    tracks/replicates pickups (it does not itself scale counts), and the PCG loot
+    tables control *which* items appear, not *how many per player*. So general loot
+    is not provably player-scaled from the dump; Level 3 repair items clearly are.
+  - **Monsters — mostly fixed caps, one per-player chance.** Level -1 shadow spawns
+    use `ALevelNeg1Manager.EntitySpawnChancePerPlayer` (more players → higher spawn
+    chance) but are hard-capped by a fixed `MaxShadowSpawnAmount`. Level 1
+    `MaxSkinStealers`, Level 4 `FacelingSpawnRateMultiplier`, Level 2.32
+    `FacelingSpawnChunkInterval`, and Level Hub `PartygoerSpawnChance` are FIXED and
+    do **not** grow with player count.
+  - Caveat: the player-count curves were authored for the game's intended ≤6 players;
+    their shape past 6 (and whether the loot manager / store spawn ranges respond to
+    headcount at runtime) is unverified and needs a live 7+ player test.
+
 ## v2.16.3-capfix (2026-06-03)
 
 ### Adapt the player-cap override to the 2026-06-03 game update

@@ -4,7 +4,7 @@
 
 ## Tested target
 
-BETPlayerCap v2.16.3 was built and tested against the Steam Windows build of
+BETPlayerCap v2.16.4 was built and tested against the Steam Windows build of
 **Backrooms: Escape Together** using Unreal Engine **5.7.4** and UE4SS **3.0.1** runtime
 files/signatures from the working test install.
 
