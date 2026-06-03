@@ -6,6 +6,85 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.16.3-capfix (2026-06-03)
+
+### Adapt the player-cap override to the 2026-06-03 game update
+
+- A game patch (shipping exe rebuilt 2026-06-03) changed the multiplayer settings
+  menu so hosts saw **max 6 / default 4** again even though the mod's widget write
+  succeeded. The widget class/fields are byte-name identical in the new exe (verified
+  by string scan), so UE4SS signatures and our class names are intact — this was a
+  **clamp/timing** change, not a signature break. No re-dump was required; UE4SS PS
+  scan still succeeds and the engine is still 5.7.
+- Fix: in addition to the existing one-shot + 5s write, the mod now post-hooks the
+  widget's own `InitializeSelection` / `ClampMaxPlayers` / `IncreaseMaxPlayers` and
+  re-asserts `MaxSelectablePlayers = 12` right after the game runs them, so the range
+  can no longer be pinned below the target. Live log confirmed `before-override
+  Min=1 Max=6 Default=4` → after hooks the host could select up to 12.
+- Cleaned up four harmless startup hook errors that were NOT caused by the update:
+  `Elevator_Base:StartElevator` / `OnAllPlayersJoined` (BlueprintImplementableEvents,
+  not hookable), `Level1ChunkManager:GenerateChunks` (defined on the base
+  `BETChunkManagerBase`), and `MultiplayerGameState:OnCurrentObjectivesUpdated` (a
+  delegate signature). Removed from the hook list; property coverage is unchanged via
+  the periodic scan and the base-class hook.
+- Logging: per-click `[CAPDIAG]` widget spam is OFF by default (`ENABLE_WIDGET_DIAG`),
+  but a one-time `before-override` line still logs each launch so a future range change
+  is immediately visible. The `[OBJCAP] … -> N` lines (the signal that a generator /
+  objective / elevator requirement was actually capped) are always logged.
+
+> Verification note: the objective-requirement cap (elevator=6, generators=10, generic
+> `bScalesWithPlayers` objectives=10) registered all four hooks with no errors, but the
+> 2026-06-03 session was single-player on Level 0/Neg1, so nothing needed capping and no
+> `[OBJCAP] … -> N` line appeared yet. Confirming generator/objective capping requires a
+> 7+ player run that actually reaches Level 1 (generators) or a level with player-scaled
+> objectives.
+
+## v2.16-generic-objective-cap (2026-06-03)
+
+### Generic cap for player-scaled objective requirements
+
+- Added separate caps so the 12-player session limit does not force level objectives
+  above the amount the maps were designed to support:
+  - `OBJECTIVE_CAP = 6` for the confirmed elevator presence gate
+    (`PlayersNeededToStartElevator`).
+  - `GENERATOR_CAP = 10` for Level 1's generator count (`NumberOfGenerators`).
+  - `GENERIC_OBJECTIVE_CAP = 10` for replicated `FLevelObjective` entries that are
+    explicitly marked `bScalesWithPlayers`.
+- The generic path targets `MultiplayerGameState.CurrentObjectives`: if an objective
+  entry has `bScalesWithPlayers=true` and `ObjectiveAmount > 10`, the host attempts
+  to clamp `ObjectiveAmount` to 10 and verifies by re-reading the owning array rather
+  than only trusting a local UE4SS struct wrapper.
+- Kept the approach bounded: no global `GetNumPlayers()` override, no progress/current
+  counter writes, no forced objective completion, no `PlayersInElevator` writes, and
+  no arbitrary UObject sweep. The monitor uses exact class/property scans plus the
+  replicated objective array, all host-authority and CDO-filtered.
+- Added hooks around elevator evaluation, Level 1 chunk generation, and objective
+  replication/update callbacks so requirements are capped near the points where the
+  game initializes or republishes them.
+
+## v2.15-objective-cap (2026-06-03)
+
+### Cap player-scaled pass requirements at 6 while keeping 12-player sessions
+
+- Added a separate `OBJECTIVE_CAP = 6` constant. `TARGET_CAP` remains 12 for the
+  lobby/session/player-cap override; the new cap is only for known progression
+  requirements that scale from connected player count.
+- Added a narrow, release-safe objective capper for the confirmed elevator gate:
+  live `Elevator_Base` subclasses have `PlayersNeededToStartElevator`, and the
+  mod now clamps that property to 6 if the game initializes it above 6. It does
+  **not** change `PlayersInElevator`, force `StartElevator`, synthesize objective
+  completion, or globally override `GetNumPlayers()`.
+- Registered guarded hooks around the elevator's own evaluation points
+  (`CheckForPlayersInElevator`, `StartElevator`, `OnAllPlayersJoined`,
+  `OnObjectiveCompleted`) and also performs a tiny exact class/property scan at
+  the existing 10s monitor cadence. Hook params are unwrapped synchronously to
+  avoid stale UE4SS `RemoteUnrealParam` wrappers; writes are host-authority only
+  and CDO-filtered.
+- Left broader puzzle/item/quest counters diagnostic-only by design. Several dump
+  fields (`RequiredTagCount`, Level 232 quota, Level FUN coins, Level 3 curves,
+  Level 37 puzzle data) may be item/tag/puzzle requirements rather than
+  player-derived requirements, so they are not capped without live proof.
+
 ## v2.14-nudge (2026-06-01)
 
 ### Ctrl+Arrow noclip nudge + Ctrl+K/L are normal features again

@@ -5,8 +5,8 @@
 A Windows UE4SS mod package for **Backrooms: Escape Together** that lets a private
 lobby host play with more than the default 6 players (target cap: **12**) and adds
 host tools for the main 7+ player pain points: gathering separated players, reloading
-a stuck level, boarding elevators, and nudging through geometry when a level was not
-built for that many bodies.
+a stuck level, boarding elevators, capping known player-scaled pass requirements at
+6, and nudging through geometry when a level was not built for that many bodies.
 
 > **Host-only install.** Only the lobby host/listen-server needs the mod. Friends can
 > join normally with an unmodified game.
@@ -19,13 +19,13 @@ built for that many bodies.
 Use the full Windows package from the GitHub Releases page:
 
 ```text
-BETPlayerCap-v2.14-full.zip
+BETPlayerCap-v2.16.3-full.zip
 ```
 
 A local build may also produce the same file under `dist/` for maintainer use.
 
 Verify your download against the tracked checksum
-([`dist/BETPlayerCap-v2.14-full.zip.sha256`](dist/BETPlayerCap-v2.14-full.zip.sha256));
+([`dist/BETPlayerCap-v2.16.3-full.zip.sha256`](dist/BETPlayerCap-v2.16.3-full.zip.sha256));
 see [`RELEASES.md`](RELEASES.md).
 
 It includes the tested UE4SS runtime/proxy DLLs, BETPlayerCap, required Keybinds and
@@ -77,8 +77,10 @@ Notes:
 - **Voice chat failures for individual players** also occur without this mod. They appear
   to be base-game/EOS RTC/client-network issues, not BETPlayerCap. The included anti-lag
   config only suppresses the worst voice log flood; it does not fix EOS voice itself.
-- Some levels were not designed for 7+ players. The elevator and noclip tools are practical
-  workarounds, not official level support.
+- Some levels were not designed for 7+ players. The objective cap targets the game's
+  player-scaled objective data (`bScalesWithPlayers`) and known level fields such as the
+  elevator presence gate and Level 1 generator count, but geometry/loading issues can still
+  require practical workarounds. The elevator and noclip tools are not official level support.
 
 ## What the package installs
 

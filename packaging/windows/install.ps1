@@ -35,7 +35,7 @@ function Select-GameRootDialog() {
     return ""
 }
 
-Write-Host 'BETPlayerCap v2.14 full package installer'
+Write-Host 'BETPlayerCap v2.16.3 full package installer'
 
 # Resolution order: explicit arg -> extracted-in-place (walk up) -> folder picker.
 if (-not (Test-GameRoot $GameRoot)) { $GameRoot = Find-GameRootUpward $PackageRoot }

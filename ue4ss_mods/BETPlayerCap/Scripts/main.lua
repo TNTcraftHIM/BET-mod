@@ -1,11 +1,15 @@
 local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 12
-local VERSION = "2.14-nudge"
+local OBJECTIVE_CAP = 6
+local GENERATOR_CAP = 10
+local GENERIC_OBJECTIVE_CAP = 10
+local VERSION = "2.16.3-capfix"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
 local ENABLE_LEVEL_TEST_KEYS = true     -- Ctrl+K/L prev/next level
 local ENABLE_PERIODIC_DIAG   = false    -- 30s player-position diagnostics after spawn fix
+local ENABLE_OBJECTIVE_CAP   = true     -- keep player-scaled pass requirements at <= OBJECTIVE_CAP
 
 -- UEHelpers ships with UE4SS (Mods/shared/UEHelpers). Used for host-pawn
 -- resolution and GameState-based player enumeration (level-independent).
@@ -209,7 +213,7 @@ local function get_player_name(char, label)
     end)
 end
 
-log("v" .. VERSION .. " loaded - target cap: " .. TARGET_CAP)
+log("v" .. VERSION .. " loaded - target cap: " .. TARGET_CAP .. ", objective cap: " .. OBJECTIVE_CAP .. ", generator cap: " .. GENERATOR_CAP)
 
 ---------------------------------------------------------------------------
 -- ADAPTIVE CLASS DETECTION
@@ -239,10 +243,46 @@ end
 
 ---------------------------------------------------------------------------
 -- WIDGET OVERRIDE (player cap)
+--
+-- v2.16.2: a 2026-06-03 game update changed the multiplayer settings menu so a
+-- one-time/5s write to MaxSelectablePlayers was being clamped back to the game's
+-- own range (hosts saw max 6 / default 4). The widget class + fields are byte-name
+-- identical in the new exe (verified by string scan), so this is a TIMING/CLAMP
+-- change, not a signature break. Fix: keep widening MaxSelectablePlayers, and also
+-- re-assert it right AFTER the widget's own InitializeSelection / ClampMaxPlayers
+-- run, so the game can't leave the range pinned below TARGET_CAP.
 ---------------------------------------------------------------------------
 local widget_props = {
     "MaxSelectablePlayers", "DefaultMaxPlayers", "SelectedMaxPlayers"
 }
+local ENABLE_WIDGET_DIAG = false  -- per-click Min/Max/Default/Selected spam; off for release.
+                                  -- The one-time before-override line below still logs each
+                                  -- launch so a future range change is still visible.
+local widget_state_logged = false
+
+local function log_widget_state(widget, tag)
+    if not widget then return end
+    safe("wdiag", function()
+        log(string.format("[CAPDIAG] %s Min=%s Max=%s Default=%s Selected=%s",
+            tag,
+            tostring(widget.MinSelectablePlayers),
+            tostring(widget.MaxSelectablePlayers),
+            tostring(widget.DefaultMaxPlayers),
+            tostring(widget.SelectedMaxPlayers)))
+    end)
+end
+
+-- Widen the selectable range so the increase button can reach TARGET_CAP. Does NOT
+-- force the host's actual SelectedMaxPlayers up — only raises the ceiling fields.
+local function widen_widget_cap(widget, reason)
+    if not widget or not is_real_instance(widget) then return end
+    safe("wcap_max", function()
+        if widget.MaxSelectablePlayers ~= TARGET_CAP then
+            widget.MaxSelectablePlayers = TARGET_CAP
+            log("[CAP] MaxSelectablePlayers -> " .. TARGET_CAP .. " (" .. tostring(reason) .. ")")
+        end
+    end)
+end
 
 local function apply_overrides()
     local wclass = resolve_class("widget")
@@ -251,6 +291,11 @@ local function apply_overrides()
     -- write only to an archetype/stale object and not the live UI instance.
     local widget = find_first_instance(wclass)
     if not widget then return end
+
+    if not widget_state_logged then
+        widget_state_logged = true
+        log_widget_state(widget, "before-override")
+    end
 
     for _, prop in ipairs(widget_props) do
         safe("Set_" .. prop, function()
@@ -279,6 +324,322 @@ ExecuteInGameThread(apply_overrides)
 LoopAsync(5000, function()
     pcall(apply_overrides)
     return false
+end)
+
+-- v2.16.2: re-assert the player-cap ceiling right after the widget's own selection
+-- setup / clamp runs. The 2026-06-03 update made these reset the range, so a one-shot
+-- write was getting clamped back to 6/4. Post-hooking the game's own functions means
+-- we always win the last write. Guarded by pcall; if a name is unhookable on a future
+-- build, the 5s LoopAsync above still applies the override.
+local widget_hooks_registered = false
+local function register_widget_cap_hooks()
+    if widget_hooks_registered then return end
+    widget_hooks_registered = true
+    local function post(path)
+        local ok = pcall(function()
+            RegisterHook(path, function(self)
+                local w = self and self:get()
+                if not w then return end
+                ExecuteInGameThread(function()
+                    if ENABLE_WIDGET_DIAG then log_widget_state(w, "after " .. path) end
+                    widen_widget_cap(w, path)
+                end)
+            end)
+        end)
+        if ok then log("[CAP] widget hook registered: " .. path)
+        else log("[CAP] widget hook unavailable: " .. path) end
+    end
+    post("/Script/BETGame.BETMultiplayerSettingsWidget:InitializeSelection")
+    post("/Script/BETGame.BETMultiplayerSettingsWidget:ClampMaxPlayers")
+    post("/Script/BETGame.BETMultiplayerSettingsWidget:IncreaseMaxPlayers")
+end
+ExecuteInGameThread(function() pcall(register_widget_cap_hooks) end)
+
+---------------------------------------------------------------------------
+-- OBJECTIVE REQUIREMENT CAP (v2.15)
+--
+-- Keep the lobby/session cap at TARGET_CAP (12), but prevent known
+-- player-count-scaled progression gates from requiring more than the vanilla
+-- supported count (OBJECTIVE_CAP = 6). This is intentionally narrow: do NOT
+-- globally lie about GetNumPlayers(), do NOT force completion, and do NOT cap
+-- generic item/tag counters unless live testing proves they are player-derived.
+---------------------------------------------------------------------------
+local objective_cap_changed = {}
+local objective_cap_hooks_registered = false
+local generator_cap_hooks_registered = false
+local objective_cap_hook_fired = {}
+
+local OBJECTIVE_CAP_CLASSES = {
+    "Elevator_Base", "Level0Elevator", "Level2Elevator", "Level4_Elevator",
+    "BP_ElevatorFinal_C", "BP_ElevatorFinal_Level2_C", "BP_Elevator_Level4_C",
+}
+
+local OBJECTIVE_CAP_PROPS = {
+    PlayersNeededToStartElevator = OBJECTIVE_CAP,
+}
+
+local GENERATOR_CAP_CLASSES = {
+    "Level1ChunkManager", "Level1ChunkManagerDebug",
+}
+
+local GENERATOR_CAP_PROPS = {
+    NumberOfGenerators = GENERATOR_CAP,
+}
+
+local GENERIC_OBJECTIVE_CLASSES = {
+    "MultiplayerGameState", "Level0GameState", "Level1GameState", "Level3GameState",
+    "Level37GameState", "Level232GameState", "LevelFUNGameState", "LevelNeg1GameState",
+}
+
+local GENERIC_OBJECTIVE_ARRAY_PROPS = {
+    "CurrentObjectives",
+}
+
+local function unwrap_param(v)
+    if not v then return nil end
+    local got = safe("unwrap", function()
+        if type(v) == "userdata" and v.get then return v:get() end
+        return nil
+    end)
+    if got then return got end
+    return v
+end
+
+local function object_label(obj)
+    return safe("ObjFullName", function() return tostring(obj:GetFullName()) end) or tostring(obj)
+end
+
+local function cap_requirement_prop(obj, prop, cap, label)
+    if not ENABLE_OBJECTIVE_CAP or not obj or not is_real_instance(obj) then return false end
+    cap = cap or OBJECTIVE_CAP
+    local old = safe("objcap_read_" .. prop, function() return obj[prop] end)
+    if type(old) ~= "number" then return false end
+    if old <= cap then return false end
+    safe("objcap_write_" .. prop, function() obj[prop] = cap return true end)
+    local now = safe("objcap_verify_" .. prop, function() return obj[prop] end)
+    if type(now) ~= "number" or now > cap then
+        log(string.format("[OBJCAP] %s.%s write did not stick (old=%s now=%s cap=%d)",
+            label, prop, tostring(old), tostring(now), cap))
+        return false
+    end
+    local key = object_label(obj) .. ":" .. prop
+    if objective_cap_changed[key] ~= old then
+        objective_cap_changed[key] = old
+        log(string.format("[OBJCAP] %s.%s %s -> %d (%s)",
+            label, prop, tostring(old), cap, object_label(obj)))
+    end
+    safe("objcap_fnu", function() obj:ForceNetUpdate() return true end)
+    return true
+end
+
+local function cap_requirement_object(obj, label)
+    obj = unwrap_param(obj)
+    if not obj or not is_real_instance(obj) then return 0 end
+    local changed = 0
+    for prop, cap in pairs(OBJECTIVE_CAP_PROPS) do
+        if cap_requirement_prop(obj, prop, cap, label or "object") then
+            changed = changed + 1
+        end
+    end
+    return changed
+end
+
+local function cap_props_on_classes(classes, props, reason)
+    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local total = 0
+    for _, class_name in ipairs(classes) do
+        local list = safe("ObjCapFind_" .. class_name, function() return FindAllOf(class_name) end)
+        if list then
+            for _, obj in pairs(list) do
+                if is_real_instance(obj) then
+                    for prop, cap in pairs(props) do
+                        if cap_requirement_prop(obj, prop, cap, reason or class_name) then
+                            total = total + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return total
+end
+
+local function cap_known_objective_requirements(reason)
+    return cap_props_on_classes(OBJECTIVE_CAP_CLASSES, OBJECTIVE_CAP_PROPS, reason)
+end
+
+local function cap_generator_requirements(reason)
+    return cap_props_on_classes(GENERATOR_CAP_CLASSES, GENERATOR_CAP_PROPS, reason)
+end
+
+local function cap_level_objective_array(owner, prop, reason)
+    if not ENABLE_OBJECTIVE_CAP or not owner or not is_real_instance(owner) then return 0 end
+    local arr = safe("ObjArray_" .. prop, function() return owner[prop] end)
+    if not arr then return 0 end
+    local n = safe("ObjArrayNum_" .. prop, function()
+        if arr.GetArrayNum then return arr:GetArrayNum() end
+        return #arr
+    end) or 0
+    if n <= 0 then return 0 end
+    local changed = 0
+    local label = reason or prop
+    local function read_entry_amount_at(target_idx)
+        local reread = safe("ObjArrayReread_" .. prop, function() return owner[prop] end)
+        if not reread then return nil end
+        local found = nil
+        safe("ObjArrayRereadEach_" .. prop, function()
+            if reread.ForEach then
+                reread:ForEach(function(Index, Elem)
+                    if tostring(Index) == tostring(target_idx) then
+                        local e = unwrap_param(Elem)
+                        if e then found = e.ObjectiveAmount end
+                    end
+                end)
+                return true
+            end
+            return false
+        end)
+        if found ~= nil then return found end
+        return safe("ObjArrayRereadIdx_" .. prop, function()
+            local e = reread[target_idx]
+            e = unwrap_param(e)
+            if e then return e.ObjectiveAmount end
+            return nil
+        end)
+    end
+    local function cap_entry(idx, entry)
+        local obj = unwrap_param(entry)
+        if not obj then return end
+        local scales = safe("ObjScale", function() return obj.bScalesWithPlayers end)
+        if scales ~= true then return end
+        local old = safe("ObjAmount", function() return obj.ObjectiveAmount end)
+        if type(old) ~= "number" or old <= GENERIC_OBJECTIVE_CAP then return end
+        safe("ObjAmountWrite", function() obj.ObjectiveAmount = GENERIC_OBJECTIVE_CAP return true end)
+        local now = read_entry_amount_at(idx)
+        if type(now) == "number" and now <= GENERIC_OBJECTIVE_CAP then
+            changed = changed + 1
+            log(string.format("[OBJCAP] %s.%s[%s].ObjectiveAmount %s -> %d (%s)",
+                label, prop, tostring(idx), tostring(old), GENERIC_OBJECTIVE_CAP, object_label(owner)))
+        else
+            log(string.format("[OBJCAP] %s.%s[%s].ObjectiveAmount write did not stick (old=%s actual=%s)",
+                label, prop, tostring(idx), tostring(old), tostring(now)))
+        end
+    end
+    local iter_ok = safe("ObjArrayForEach_" .. prop, function()
+        if arr.ForEach then
+            arr:ForEach(function(Index, Elem) cap_entry(Index, Elem) end)
+            return true
+        end
+        return false
+    end)
+    if not iter_ok then
+        for i = 1, n do
+            safe("ObjArrayIdx_" .. prop, function() cap_entry(i, arr[i]) return true end)
+        end
+    end
+    if changed > 0 then
+        safe("objarray_fnu", function() owner:ForceNetUpdate() return true end)
+    end
+    return changed
+end
+
+local function cap_generic_scaled_objectives(reason)
+    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local total = 0
+    for _, class_name in ipairs(GENERIC_OBJECTIVE_CLASSES) do
+        local list = safe("ObjScaledFind_" .. class_name, function() return FindAllOf(class_name) end)
+        if list then
+            for _, obj in pairs(list) do
+                if is_real_instance(obj) then
+                    for _, prop in ipairs(GENERIC_OBJECTIVE_ARRAY_PROPS) do
+                        total = total + cap_level_objective_array(obj, prop, reason or class_name)
+                    end
+                end
+            end
+        end
+    end
+    return total
+end
+
+local function register_cap_hook(path, props)
+    local ok = safe("ObjCapHook_" .. path, function()
+        RegisterHook(path, function(self, ...)
+            -- UE4SS hook params are RemoteUnrealParam-style wrappers; unwrap them
+            -- synchronously inside the hook callback, before the wrapper can go stale.
+            local obj = unwrap_param(self)
+            if not obj or not is_real_instance(obj) then return end
+            ExecuteInGameThread(function()
+                if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return end
+                if not is_real_instance(obj) then return end
+                if not objective_cap_hook_fired[path] then
+                    objective_cap_hook_fired[path] = true
+                    log("[OBJCAP] hook fired: " .. path .. " on " .. object_label(obj))
+                end
+                for prop, cap in pairs(props) do
+                    cap_requirement_prop(obj, prop, cap, path)
+                end
+            end)
+        end)
+        return true
+    end)
+    if ok then
+        log("[OBJCAP] hook registered: " .. path)
+    else
+        log("[OBJCAP] hook unavailable: " .. path)
+    end
+end
+
+local function register_objective_cap_hook(path)
+    register_cap_hook(path, OBJECTIVE_CAP_PROPS)
+end
+
+local function register_generic_objective_hook(path)
+    local ok = safe("ObjCapHook_" .. path, function()
+        RegisterHook(path, function(self, ...)
+            local obj = unwrap_param(self)
+            if not obj or not is_real_instance(obj) then return end
+            ExecuteInGameThread(function()
+                if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return end
+                if not is_real_instance(obj) then return end
+                if not objective_cap_hook_fired[path] then
+                    objective_cap_hook_fired[path] = true
+                    log("[OBJCAP] hook fired: " .. path .. " on " .. object_label(obj))
+                end
+                cap_level_objective_array(obj, "CurrentObjectives", path)
+            end)
+        end)
+        return true
+    end)
+    if ok then
+        log("[OBJCAP] hook registered: " .. path)
+    else
+        log("[OBJCAP] hook unavailable: " .. path)
+    end
+end
+
+local function ensure_objective_cap_hooks()
+    if objective_cap_hooks_registered or not ENABLE_OBJECTIVE_CAP then return end
+    objective_cap_hooks_registered = true
+    -- Only hook functions that are real, hookable UFunctions on this build (verified
+    -- against UE4SS.log 2026-06-03 after a game update). Excluded on purpose:
+    --   * Elevator_Base:StartElevator / OnAllPlayersJoined — BlueprintImplementableEvents
+    --     (FUNC_Native:0, ProcessInternal:0x0) → not hookable; the periodic scan and the
+    --     CheckForPlayersInElevator/OnObjectiveCompleted hooks already cover the cap.
+    --   * Level1ChunkManager:GenerateChunks — defined on base BETChunkManagerBase, not the
+    --     subclass; the base hook below covers it.
+    --   * MultiplayerGameState:OnCurrentObjectivesUpdated — a delegate signature, not a real
+    --     UFunction; OnRep_CurrentObjectives is the hookable replication entry point.
+    register_objective_cap_hook("/Script/BETGame.Elevator_Base:CheckForPlayersInElevator")
+    register_objective_cap_hook("/Script/BETGame.Elevator_Base:OnObjectiveCompleted")
+    register_cap_hook("/Script/BETGame.BETChunkManagerBase:GenerateChunks", GENERATOR_CAP_PROPS)
+    register_generic_objective_hook("/Script/BETGame.MultiplayerGameState:OnRep_CurrentObjectives")
+end
+
+ExecuteInGameThread(function()
+    pcall(ensure_objective_cap_hooks)
+    pcall(cap_known_objective_requirements, "startup")
+    pcall(cap_generator_requirements, "startup")
+    pcall(cap_generic_scaled_objectives, "startup")
 end)
 
 ---------------------------------------------------------------------------
@@ -1196,6 +1557,10 @@ local function run_monitor()
             level_detect_time = diag_tick
             log("[DIAG] Game level detected via " .. tostring(via) .. " at tick " .. diag_tick)
             -- Register host keybinds now that we're in a real level.
+            ensure_objective_cap_hooks()
+            cap_known_objective_requirements("level-detect")
+            cap_generator_requirements("level-detect")
+            cap_generic_scaled_objectives("level-detect")
             ensure_summon_keybind()
             ensure_levelsw_keybind()
             ensure_reload_keybind()
@@ -1246,7 +1611,20 @@ local function run_monitor()
         log("[LEVELSW] Arrived — auto-gather disabled. Press Ctrl+G to gather when settled.")
     end
 
-    -- Phase 4: Periodic diagnostics (every 30s = every 3rd tick).
+    -- Phase 4: Keep known and generic player-scaled requirements capped. This uses
+    -- exact class/property scans plus the game's replicated FLevelObjective array:
+    --   * Elevator_Base subclasses: PlayersNeededToStartElevator <= 6
+    --   * Level1ChunkManager: NumberOfGenerators <= 10
+    --   * MultiplayerGameState.CurrentObjectives entries with bScalesWithPlayers:
+    --     ObjectiveAmount <= 10
+    -- It does not scan arbitrary UObjects or touch current/progress/completed fields.
+    if ENABLE_OBJECTIVE_CAP then
+        cap_known_objective_requirements("monitor")
+        cap_generator_requirements("monitor")
+        cap_generic_scaled_objectives("monitor")
+    end
+
+    -- Phase 5: Periodic diagnostics (every 30s = every 3rd tick).
     -- Cluster-RELATIVE classification: the old absolute -8150 threshold is
     -- meaningless (runtime frame differs from PlayerStart frame). We report each
     -- player's Z plus its distance from the group median.
@@ -1285,4 +1663,5 @@ log("[RELOAD] Host keybind Ctrl+J (reload current level, un-stick loading) will 
 log("[PROBE] Host keybind Ctrl+O (read elevator gate, READ-ONLY probe/detect) will arm once in a real level")
 log("[BOARD] Host keybind Ctrl+P (teleport all players into elevator) will arm once in a real level")
 log("[NUDGE] Host keybinds Ctrl+Arrows (noclip move) / Ctrl+PageUp-Down (Z) will arm once in a real level")
+log("[OBJCAP] Player-scaled requirements are capped at " .. OBJECTIVE_CAP .. " (generators " .. GENERATOR_CAP .. ", session cap remains " .. TARGET_CAP .. ")")
 log("[ADAPT] UEHelpers " .. (UEHelpers and "loaded" or "NOT FOUND — host-anchor disabled, will use cluster median"))
