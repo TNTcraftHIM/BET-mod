@@ -6,6 +6,61 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.17.0-generic-cap (2026-06-04)
+
+### Comprehensive player-scaling cap across all levels
+
+Design principle: **same difficulty as ≤6 players, just with up to 16 people.**
+
+- **"All players" gates** (`bRequiresAllPlayers` on `AInteractableTeleporter` and
+  `ALevelExitBase`): when possessed players > 6, force the boolean false so a 7–16
+  player group is not blocked by geometry built for ≤6. Re-asserted via the periodic
+  scan and also post-hook on `OnAllPlayersPresent` / `OnSurvivorOverlap`.
+- **Level 232 `ScaledPricePercent`**: the game's player-scaled discount makes items
+  too cheap to sell (user-confirmed at >6). Clamped to a configurable floor
+  (`S232_PRICE_FLOOR = 0.50`, i.e. 50% minimum price).
+- **Extended objective-requirement caps**: based on a full class-dump audit of every
+  level manager / GameState / progression actor in BETGame.hpp:
+  - `FuseBoard.RequiredFuseAmount ≤ 10`
+  - `RepairableElectricalBox.RequiredFuseAmount ≤ 10`
+  - `CoinGate.CoinsRequired ≤ 10`
+  - `InteractableDoor.ItemAmountRequired ≤ 10`
+  - `LevelFunExitDoor.RequiredTicketMilestone ≤ 10`
+  - `LevelFunExitPinger.ItemAmountRequired ≤ 10`
+  - `ChristmasPresentQuestActor` tag-count cap (≤ 10 present tags)
+- **Reorganized config block** at the top of main.lua: `TARGET_CAP=16`,
+  `OBJECTIVE_CAP=6`, `GENERATOR_CAP=10`, `GENERIC_OBJECTIVE_CAP=10`,
+  `ALL_PLAYERS_GATE_CAP=6`, `S232_PRICE_FLOOR=0.50`.
+- All new scans are host-authority-only, CDO-filtered, and use the same proven
+  periodic + hook model. Design documents the full audit catalog (which systems
+  are player-scaled vs fixed) in project memory.
+
+### Full audit: which systems scale with player count
+
+> From a line-by-line read of every LevelNChunkManager / GameState / GameMode /
+> progression actor in BETGame.hpp (v2.16 dump), with line numbers and offsets.
+> See `docs/research/full_player_scaling_audit_v217.md` for the complete table.
+
+- **Scales with players (confirmed by curve / per-player field):**
+  - Level 3 wire/repair-item spawning (`PlayerCountToWireCurve`,
+    `PlayerCountToRepairItemMultiplier`)
+  - Level 3 fuse requirement (`AFuseBoard.PlayerCountFuseCurve`)
+  - Level -1 shadow spawn chance (`EntitySpawnChancePerPlayer`, but hard-capped
+    by `MaxShadowSpawnAmount`)
+  - Level 232 sale-price discount (`ScaledPricePercent`)
+- **Fixed (not player-scaled) — do NOT cap:**
+  - Level 1: `MaxSkinStealers`, `NumberOfAlmondWater`, `NumberOfGenerators`,
+    `NumberOfPuddles`
+  - Level 232: `ItemSpawnRates` (fixed FIntPoint ranges), `FacelingSpawnChunkInterval`
+  - Level 4: `FacelingSpawnRateMultiplier`
+  - Level Hub: `PartygoerSpawnChance`
+  - Base: `SpawnPointsPerChunk`, `BoltCutterNum`
+- **Uncertain — need live test:**
+  - `FLevelObjective.ObjectiveAmount` cap via `OnRep_CurrentObjectives` hook
+    (registered, but not yet hit in a ≥7 player session)
+  - Level FUN `WarehouseRequiredCoinsTotals` (TArray<int32> — Lua array mutation
+    is unverified)
+
 ## v2.16.4-cap16 (2026-06-03)
 
 - `TARGET_CAP` set to **16** — live-tested as the highest value that can still create

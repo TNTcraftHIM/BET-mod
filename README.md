@@ -19,13 +19,13 @@ a stuck level, boarding elevators, capping known player-scaled pass requirements
 Use the full Windows package from the GitHub Releases page:
 
 ```text
-BETPlayerCap-v2.16.4-full.zip
+BETPlayerCap-v2.17.0-full.zip
 ```
 
 A local build may also produce the same file under `dist/` for maintainer use.
 
 Verify your download against the tracked checksum
-([`dist/BETPlayerCap-v2.16.4-full.zip.sha256`](dist/BETPlayerCap-v2.16.4-full.zip.sha256));
+([`dist/BETPlayerCap-v2.17.0-full.zip.sha256`](dist/BETPlayerCap-v2.17.0-full.zip.sha256));
 see [`RELEASES.md`](RELEASES.md).
 
 It includes the tested UE4SS runtime/proxy DLLs, BETPlayerCap, required Keybinds and

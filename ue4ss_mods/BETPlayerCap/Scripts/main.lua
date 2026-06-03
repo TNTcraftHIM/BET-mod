@@ -8,11 +8,22 @@ local TARGET_CAP = 16
 -- OBJECTIVE_CAP: cap for player-presence pass gates (e.g. elevator "players needed").
 local OBJECTIVE_CAP = 6
 -- GENERATOR_CAP / GENERIC_OBJECTIVE_CAP: cap for player-scaled objective counts
---   (Level 1 generators, and any objective the game marks bScalesWithPlayers).
+--   (Level 1 generators, repairs, fuses, coins, doors, FUN tickets, and any
+--   objective the game marks bScalesWithPlayers).
 local GENERATOR_CAP = 10
 local GENERIC_OBJECTIVE_CAP = 10
+-- ALL_PLAYERS_GATE_CAP: when there are more than this many possessed players, force
+--   bRequiresAllPlayers = false on teleporters (AInteractableTeleporter) and level
+--   exits (ALevelExitBase), so a 7–16 player group is not blocked by geometry that
+--   was built for ≤6.
+local ALL_PLAYERS_GATE_CAP = 6
+-- S232_PRICE_FLOOR: Level 232 "ScaledPricePercent" decreases with more players,
+--   making items too cheap to sell and the quota nearly impossible. Clamp it to
+--   at least this value. 0.50 means 50% = roughly the ≤6-player minimum seen in
+--   testing. Adjust if needed.
+local S232_PRICE_FLOOR = 0.50
 -- ======================================================================
-local VERSION = "2.16.4-cap16"
+local VERSION = "2.17.0-generic-cap"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -365,41 +376,72 @@ end
 ExecuteInGameThread(function() pcall(register_widget_cap_hooks) end)
 
 ---------------------------------------------------------------------------
--- OBJECTIVE REQUIREMENT CAP (v2.15)
+-- OBJECTIVE REQUIREMENT CAP (v2.17)
 --
--- Keep the lobby/session cap at TARGET_CAP (12), but prevent known
--- player-count-scaled progression gates from requiring more than the vanilla
--- supported count (OBJECTIVE_CAP = 6). This is intentionally narrow: do NOT
--- globally lie about GetNumPlayers(), do NOT force completion, and do NOT cap
--- generic item/tag counters unless live testing proves they are player-derived.
+-- Design principle: same difficulty as ≤6 players. When a player-count-scaled
+-- field or "all players" gate exceeds the vanilla-supported range, cap or disable
+-- it. Never change current/progress/completed, never force completion, never
+-- override GetNumPlayers().
 ---------------------------------------------------------------------------
 local objective_cap_changed = {}
 local objective_cap_hooks_registered = false
-local generator_cap_hooks_registered = false
 local objective_cap_hook_fired = {}
 
-local OBJECTIVE_CAP_CLASSES = {
+-- == Elevator presence gate ==
+local ELEVATOR_CLASSES = {
     "Elevator_Base", "Level0Elevator", "Level2Elevator", "Level4_Elevator",
     "BP_ElevatorFinal_C", "BP_ElevatorFinal_Level2_C", "BP_Elevator_Level4_C",
 }
-
-local OBJECTIVE_CAP_PROPS = {
+local ELEVATOR_PROPS = {
     PlayersNeededToStartElevator = OBJECTIVE_CAP,
 }
 
+-- == "All players must be present" gates — force false when > ALL_PLAYERS_GATE_CAP ==
+local ALL_PLAYERS_GATE_CLASSES = {
+    "InteractableTeleporter", "LevelExitBase",
+}
+local ALL_PLAYERS_GATE_PROPS = {
+    bRequiresAllPlayers = false,  -- cap_requirement_prop sets bools to target when true
+}
+
+-- == Level 232: prevent the player-scaled price discount from making items too cheap ==
+local S232_PRICE_CLASSES = {
+    "Level232GameState",
+}
+local S232_PRICE_PROPS = {
+    ScaledPricePercent = true,  -- special floor; see cap_scaled_price_percent below
+}
+
+-- == Generator count (Level 1) ==
 local GENERATOR_CAP_CLASSES = {
     "Level1ChunkManager", "Level1ChunkManagerDebug",
 }
-
 local GENERATOR_CAP_PROPS = {
     NumberOfGenerators = GENERATOR_CAP,
 }
 
+-- == Per-class numeric caps for player-scaled objective requirements ==
+local NUMERIC_CAP_CLASSES = {
+    "FuseBoard",                   -- PlayerCountFuseCurve → RequiredFuseAmount
+    "RepairableElectricalBox",     -- RequiredFuseAmount
+    "CoinGate",                    -- CoinsRequired
+    "InteractableDoor",            -- ItemAmountRequired
+    "LevelFunExitDoor",            -- RequiredTicketMilestone
+    "LevelFunExitPinger",          -- ItemAmountRequired
+    "ChristmasPresentQuestActor",  -- RequiredPresentsTags array (cap tag count)
+}
+local NUMERIC_CAP_PROPS = {
+    RequiredFuseAmount = GENERIC_OBJECTIVE_CAP,
+    CoinsRequired = GENERIC_OBJECTIVE_CAP,
+    ItemAmountRequired = GENERIC_OBJECTIVE_CAP,
+    RequiredTicketMilestone = GENERIC_OBJECTIVE_CAP,
+}
+
+-- == GameState-scoped generic "bScalesWithPlayers" objective array ==
 local GENERIC_OBJECTIVE_CLASSES = {
     "MultiplayerGameState", "Level0GameState", "Level1GameState", "Level3GameState",
     "Level37GameState", "Level232GameState", "LevelFUNGameState", "LevelNeg1GameState",
 }
-
 local GENERIC_OBJECTIVE_ARRAY_PROPS = {
     "CurrentObjectives",
 }
@@ -474,11 +516,67 @@ local function cap_props_on_classes(classes, props, reason)
 end
 
 local function cap_known_objective_requirements(reason)
-    return cap_props_on_classes(OBJECTIVE_CAP_CLASSES, OBJECTIVE_CAP_PROPS, reason)
+    return cap_props_on_classes(ELEVATOR_CLASSES, ELEVATOR_PROPS, reason)
 end
 
 local function cap_generator_requirements(reason)
     return cap_props_on_classes(GENERATOR_CAP_CLASSES, GENERATOR_CAP_PROPS, reason)
+end
+
+local function cap_numeric_requirements(reason)
+    return cap_props_on_classes(NUMERIC_CAP_CLASSES, NUMERIC_CAP_PROPS, reason)
+end
+
+-- Force bRequiresAllPlayers=false on teleporters and level exits when there are
+-- more than ALL_PLAYERS_GATE_CAP possessed players. The boolean gate was built
+-- for ≤6; at 7–16 the geometry can't fit everyone and the gate prevents progress.
+local function cap_all_players_gates(reason)
+    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local players = collect_players()
+    if #players <= ALL_PLAYERS_GATE_CAP then return 0 end
+    local total = 0
+    for _, class_name in ipairs(ALL_PLAYERS_GATE_CLASSES) do
+        local list = safe("APGF_" .. class_name, function() return FindAllOf(class_name) end)
+        if list then
+            for _, obj in pairs(list) do
+                if is_real_instance(obj) then
+                    local v = safe("APGR_" .. class_name, function() return obj.bRequiresAllPlayers end)
+                    if v == true then
+                        safe("APGW_" .. class_name, function() obj.bRequiresAllPlayers = false return true end)
+                        total = total + 1
+                        log(string.format("[GATE] %s.bRequiresAllPlayers true->false — %d possessed > %d (%s)",
+                            class_name, #players, ALL_PLAYERS_GATE_CAP, object_label(obj)))
+                    end
+                end
+            end
+        end
+    end
+    return total
+end
+
+-- Level 232: if ScaledPricePercent has been driven below the floor by player
+-- count, clamp it back to the floor. The game multiplies item sale price by this
+-- value; more players → lower value → harder to meet quota.
+local function cap_s232_price(reason)
+    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local total = 0
+    for _, class_name in ipairs(S232_PRICE_CLASSES) do
+        local list = safe("S232F_" .. class_name, function() return FindAllOf(class_name) end)
+        if list then
+            for _, obj in pairs(list) do
+                if is_real_instance(obj) then
+                    local v = safe("S232R_" .. class_name, function() return obj.ScaledPricePercent end)
+                    if type(v) == "number" and v < S232_PRICE_FLOOR then
+                        safe("S232W_" .. class_name, function() obj.ScaledPricePercent = S232_PRICE_FLOOR return true end)
+                        total = total + 1
+                        log(string.format("[S232] %s.ScaledPricePercent %.3f -> %.2f (%s)",
+                            class_name, v, S232_PRICE_FLOOR, object_label(obj)))
+                    end
+                end
+            end
+        end
+    end
+    return total
 end
 
 local function cap_level_objective_array(owner, prop, reason)
@@ -599,7 +697,7 @@ local function register_cap_hook(path, props)
 end
 
 local function register_objective_cap_hook(path)
-    register_cap_hook(path, OBJECTIVE_CAP_PROPS)
+    register_cap_hook(path, ELEVATOR_PROPS)
 end
 
 local function register_generic_objective_hook(path)
@@ -642,12 +740,20 @@ local function ensure_objective_cap_hooks()
     register_objective_cap_hook("/Script/BETGame.Elevator_Base:OnObjectiveCompleted")
     register_cap_hook("/Script/BETGame.BETChunkManagerBase:GenerateChunks", GENERATOR_CAP_PROPS)
     register_generic_objective_hook("/Script/BETGame.MultiplayerGameState:OnRep_CurrentObjectives")
+    -- The following hooks re-assert caps at points where the game re-initializes
+    -- or re-evaluates these values during gameplay (not just at level start).
+    register_cap_hook("/Script/BETGame.FuseBoard:OnFuseBoardInitialized", NUMERIC_CAP_PROPS)
+    register_cap_hook("/Script/BETGame.Elevator_Base:CheckForPlayersInElevator", ELEVATOR_PROPS)  -- re-assert after
+    register_generic_objective_hook("/Script/BETGame.Level232GameState:OnRep_CurrentQuota")
 end
 
 ExecuteInGameThread(function()
     pcall(ensure_objective_cap_hooks)
     pcall(cap_known_objective_requirements, "startup")
     pcall(cap_generator_requirements, "startup")
+    pcall(cap_numeric_requirements, "startup")
+    pcall(cap_all_players_gates, "startup")
+    pcall(cap_s232_price, "startup")
     pcall(cap_generic_scaled_objectives, "startup")
 end)
 
@@ -1569,6 +1675,9 @@ local function run_monitor()
             ensure_objective_cap_hooks()
             cap_known_objective_requirements("level-detect")
             cap_generator_requirements("level-detect")
+            cap_numeric_requirements("level-detect")
+            cap_all_players_gates("level-detect")
+            cap_s232_price("level-detect")
             cap_generic_scaled_objectives("level-detect")
             ensure_summon_keybind()
             ensure_levelsw_keybind()
@@ -1630,6 +1739,9 @@ local function run_monitor()
     if ENABLE_OBJECTIVE_CAP then
         cap_known_objective_requirements("monitor")
         cap_generator_requirements("monitor")
+        cap_numeric_requirements("monitor")
+        cap_all_players_gates("monitor")
+        cap_s232_price("monitor")
         cap_generic_scaled_objectives("monitor")
     end
 
