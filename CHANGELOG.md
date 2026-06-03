@@ -49,17 +49,17 @@ Design principle: **same difficulty as ≤6 players, just with up to 16 people.*
     by `MaxShadowSpawnAmount`)
   - Level 232 sale-price discount (`ScaledPricePercent`)
 - **Fixed (not player-scaled) — do NOT cap:**
-  - Level 1: `MaxSkinStealers`, `NumberOfAlmondWater`, `NumberOfGenerators`,
+  - Level 1: `MaxSkinStealers`, `NumberOfAlmondWater`, `NumberOfGenerators` (fixed),
     `NumberOfPuddles`
   - Level 232: `ItemSpawnRates` (fixed FIntPoint ranges), `FacelingSpawnChunkInterval`
   - Level 4: `FacelingSpawnRateMultiplier`
   - Level Hub: `PartygoerSpawnChance`
-  - Base: `SpawnPointsPerChunk`, `BoltCutterNum`
+  - Base game mode: `SpawnPointsPerChunk`, `BoltCutterNum`
 - **Uncertain — need live test:**
-  - `FLevelObjective.ObjectiveAmount` cap via `OnRep_CurrentObjectives` hook
-    (registered, but not yet hit in a ≥7 player session)
   - Level FUN `WarehouseRequiredCoinsTotals` (TArray<int32> — Lua array mutation
-    is unverified)
+    is unverified). The generic `CurrentObjectives` cap via `OnRep_CurrentObjectives`
+    hook covers most other player-scaled objectives if they set the flag, but this
+    specific array has not been confirmed.
 
 ## v2.16.4-cap16 (2026-06-03)
 

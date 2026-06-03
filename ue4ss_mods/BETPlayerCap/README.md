@@ -1,8 +1,8 @@
 # BETPlayerCap (UE4SS Lua mod)
 
-Raises the player cap above the default 6 in **Backrooms Escape Together**, and
+Raises the player cap above the default 6 in **Backrooms: Escape Together**, and
 adds host-only tools to keep a 7+ player session working (gather, level switch,
-reload a stuck level, and board the elevator for level transitions).
+reload a stuck level, board the elevator for level transitions).
 
 The mod runs **only on the host** (the listen-server authority). Clients do not
 need it installed — they just join the host's lobby.
@@ -15,6 +15,13 @@ need it installed — they just join the host's lobby.
   (an outlier far from the group), they are teleported to the group. Settling-gated
   so it never fires mid-elevator-descent, and outlier-only so it never rubber-bands
   someone who walks off on purpose.
+- **Player-scaled requirement caps:** Elevators requiring ≤6 players, generator counts
+  capped at ≤10, all player-count-driven objective amounts capped at ≤10 (via the game's
+  `bScalesWithPlayers` flag), and Level 232 sale-price discounts clamped to ≥50%.
+- **"All players" gate disabler:** when more than 6 players are present, teleporters
+  (`AInteractableTeleporter`) and level exits (`ALevelExitBase`) have their
+  `bRequiresAllPlayers` flag forced to false — otherwise a group of 7–16 cannot fit on
+  pads built for ≤6.
 
 ## Host keybinds
 

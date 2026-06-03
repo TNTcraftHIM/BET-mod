@@ -4,9 +4,10 @@
 
 ## Tested target
 
-BETPlayerCap v2.17.0 was built and tested against the Steam Windows build of
-**Backrooms: Escape Together** using Unreal Engine **5.7.4** and UE4SS **3.0.1** runtime
-files/signatures from the working test install.
+The last known confirmed build is **v2.17.0** against the Steam Windows release of
+**Backrooms: Escape Together** using Unreal Engine **5.7.x** and UE4SS **3.0.x**.
+The exact engine version, UE4SS runtime files, and signatures may change as the game
+updates — consult the changelog for the most recent tested configuration.
 
 ## Update policy
 
@@ -18,7 +19,7 @@ Common breakage symptoms:
 - The game launches but no `[BETPlayerCap]` lines appear in `UE4SS.log`.
 - UE4SS reports signature scan failures.
 - Keybinds do nothing in a real level.
-- The player-cap UI no longer changes above 6.
+- The player-cap UI no longer changes above 6 (or the new cap is not reflected).
 - Travel/gather/elevator tools log object/class resolution failures.
 
 If any of these happen after a Steam update, use `uninstall.bat` and wait for an updated
