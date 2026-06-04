@@ -29,7 +29,7 @@ local ENABLE_SUPPLY_SCALING = true
 --   logs the current value once for diagnostics.
 local S232_PRICE_FLOOR = nil  -- disabled: ScaledPricePercent is not modified
 -- ======================================================================
-local VERSION = "2.18.0-dynamic-six-player-baseline"
+local VERSION = "2.19.0-comprehensive-scaling"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).

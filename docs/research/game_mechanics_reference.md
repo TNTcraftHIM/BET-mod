@@ -479,7 +479,7 @@ No player-scaled fields identified.
 
 ---
 
-## Inventory of All Mod Actions (v2.18)
+## Inventory of All Mod Actions (v2.19)
 
 | Target | Action | Trigger |
 |--------|--------|---------|

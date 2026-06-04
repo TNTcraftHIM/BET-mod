@@ -1,9 +1,9 @@
-# Full Player-Scaling Audit (v2.18)
+# Full Player-Scaling Audit (v2.19)
 
 > Line-by-line read of every `LevelNChunkManager` / `GameState` / `GameMode` /
 > progression actor in `BETGame.hpp` (2026-06-02 dump, UE 5.7 MSVC shipping build).
 > This is the data that drives the per-class caps, curve-backed baselines,
-> supply scaling, and gate-disables in main.lua v2.18+.
+> supply scaling, and gate-disables in main.lua v2.19+.
 
 ---
 
@@ -114,7 +114,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 
 ---
 
-## Summary of all caps/scales applied by v2.18+ mod logic
+## Summary of all caps/scales applied by v2.19+ mod logic
 
 | What | Cap / scale value | Method |
 |------|-------------------|--------|

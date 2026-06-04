@@ -6,6 +6,54 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.0-comprehensive-scaling (2026-06-04)
+
+### Full-level audit pass — every level checked against dump, new caps & supplies
+
+After a line-by-line read of all 13 level ChunkManagers and GameStates from
+`BETGame.hpp` (documented in `docs/research/game_mechanics_reference.md`),
+this version adds level-specific caps and supply scaling where the dump
+exposes player-count fields.
+
+**New difficulty caps (keep ≤6-player difficulty):**
+- **Level 6 `ALevel6PuzzleManager.bScaleWithPlayers`** forced to false when >6
+  possessed. This puzzle explicitly scales with player count (more buttons /
+  harder sequence); preventing the scale-up keeps the museum puzzle at ≤6
+  difficulty. Also logs `NumButtons` for diagnostics.
+
+**New supply scaling (scale UP for >6 players):**
+- **Level 3 `RepairItemMultiplier`**: repair-item spawn multiplier now scaled up
+  by `players/6` (more repair materials for larger groups).
+- **Level Neg1 `LootSpawnRatio`**: loot density ratio now scaled up by
+  `players/6` (more items to find in basement bedrooms).
+- **Level 232 `AALevel232CheckoutLane.CouponMultiplier`**: per-checkout-lane
+  coupon price multiplier now scaled up by `players/6`. Higher coupon = items
+  sell for more money = quota easier to meet.
+- **Level 232 `AALevel232CheckoutLane.LaneMultiplier`**: per-lane base price
+  multiplier also scaled up for larger groups.
+
+**Expanded Level 232 diagnostics:**
+- First detection now logs the full price chain: `ScaledPricePercent`,
+  `RequiredQuota`, `CurrentQuota`, `MaxNumberOfItemsForPurchase`, and
+  `ColdItemMultiplier`. This will reveal whether `RequiredQuota` itself scales
+  with player count (couldn't determine from the dump).
+
+**Level 232 full price-chain analysis** (documented in game_mechanics_reference):
+```
+SellPrice = BasePrice × HotCategoryMultiplier × ColdItemMultiplier
+          × LaneMultiplier × CouponMultiplier × ScaledPricePercent
+```
+We now scale the `LaneMultiplier` and `CouponMultiplier` links in this chain;
+`ScaledPricePercent` remains read-only pending live ≥7-player observation.
+
+**Comprehensive mechanics reference:**
+- `docs/research/game_mechanics_reference.md`: all gameplay-relevant fields
+  from every LevelNChunkManager, GameState, and key actor in `BETGame.hpp`,
+  with offsets, types, categories (requirement/supply/monster/layout), and
+  current mod actions.
+
+---
+
 ## v2.18.0-dynamic-six-player-baseline (2026-06-04)
 
 ### Stop using one universal "10" for everything; add supply scaling for larger groups
@@ -38,9 +86,7 @@ available yet.
   `PlayerCountToWireCurve` and sector wire repair counts, but cannot prove whether those
   counts represent required repairs versus available repairable wires. Do not cap them
   until a live run confirms they are requirements, not supply.
-- **Still NOT supply-scaled by default:** monster difficulty fields and Level 3
-  `PlayerCountToRepairItemMultiplier`/`RepairItemMultiplier`/spawn chances. Those may already
-  be player-count-aware or are difficulty knobs; changing them needs live values first.
+- **Still NOT supply-scaled by default (v2.18; updated in v2.19):** monster difficulty fields. Level Neg1 `LootSpawnRatio`, Level 3 `RepairItemMultiplier`, and Level 232 `CouponMultiplier`/`LaneMultiplier` added to supply scaling in v2.19.
 - **Optional local self no-collision toggle:** `Ctrl+N` toggles collision on the
   installed player's own pawn. This is intentionally local-only for clients who choose
   to install the mod too; it does not scan or modify monster actors or other players.

@@ -1,4 +1,4 @@
-BETPlayerCap v2.18.0 FULL WINDOWS PACKAGE
+BETPlayerCap v2.19.0 FULL WINDOWS PACKAGE
 =======================================
 [ English (this file) | 中文: README_INSTALL.zh-CN.txt ]
 
@@ -7,7 +7,7 @@ Download this package only from the project GitHub release page.
 WHAT THIS INSTALLS
 ------------------
 - UE4SS runtime/proxy files under the game's BET\Binaries\Win64 folder
-- BETPlayerCap v2.18.0 Lua mod
+- BETPlayerCap v2.19.0 Lua mod
 - UE4SS Keybinds + shared UEHelpers support files
 - Anti-lag Engine.ini in your user config folder
 - Backup data under BET\Binaries\Win64\.BETPlayerCapBackup
