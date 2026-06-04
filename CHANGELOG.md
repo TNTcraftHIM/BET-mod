@@ -6,6 +6,43 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.17.1-requirement-audit (2026-06-04)
+
+### Tighten the requirement-vs-supply split after a full dump re-audit
+
+A line-by-line re-read of `BETGame.hpp` / `UE4SS_ObjectDump.txt` confirmed which
+player-scaled fields are *requirements* (cap them down) versus *supply/spawns* (must
+NOT be capped, or larger groups get less) versus *monster difficulty* (out of scope
+for the objective cap). See `docs/research/full_player_scaling_audit_v217.md`.
+
+- **Level FUN warehouse coins**: `LevelFUNChunkManager.WarehouseRequiredCoinsTotals`
+  (`TArray<int32>`) is a requirement total per warehouse. Added a real int-array
+  capper (`cap_int_array_prop` / `cap_int_array_requirements`) that clamps each
+  element to `GENERIC_OBJECTIVE_CAP=10`, wired into startup/level-detect/monitor and
+  a hook on `AddWarehouseRequiredCoins`. (Previously the table existed but was never
+  executed.) **Live TArray mutation still needs a ≥7-player Level FUN confirmation.**
+- **`PartyCelebrationSpeaker.RequiredTicketMilestone`** added to the numeric cap list
+  (≤10) — it is a ticket-goal gate like `LevelFunExitDoor`.
+- **`ChristmasPresentQuestActor` corrected**: `RequiredPresentsTags` is an
+  `FGameplayTagContainer`, not an int array, so the scalar cap never applied to it.
+  Removed it from `NUMERIC_CAP_CLASSES` rather than leave a no-op that the docs
+  claimed was active. The generic `CurrentObjectives` path still covers it if the
+  game publishes a scaled objective.
+- **All-player gates now event-driven**: added hooks on `LevelExitBase:OnSurvivorOverlap`,
+  `LevelExitBase:OnAllPlayersPresent`, and `InteractableTeleporter:OnActivationStateChange`/
+  `AreAllPlayersPresent` so `bRequiresAllPlayers` is re-disabled immediately, not just
+  by the 10s monitor scan. (Docs previously claimed these hooks existed; now they do.)
+- **Level 232 price floor raised `0.50` → `1.00`**: strict "more players is never
+  harder" policy — player count can no longer discount sell prices at all. The dump
+  has no authored 6-player `ScaledPricePercent` value to match, so 1.00 is the safe
+  no-harder choice until live logging proves a lower vanilla floor.
+- **Removed a duplicate** `Elevator_Base:CheckForPlayersInElevator` hook registration.
+- **Explicitly NOT capped** (confirmed supply/difficulty, not requirements): Level 3
+  `PlayerCountToWireCurve`/`PlayerCountToRepairItemMultiplier`/lootbox wire+tape spawn
+  counts, Level 232 `ItemSpawnRates`, Level 1 almond water, and all monster spawn
+  fields (skin stealers, facelings, partygoers, Level -1 shadow chance). Capping these
+  would make larger groups *harder*, the opposite of the goal.
+
 ## v2.17.0-generic-cap (2026-06-04)
 
 ### Comprehensive player-scaling cap across all levels

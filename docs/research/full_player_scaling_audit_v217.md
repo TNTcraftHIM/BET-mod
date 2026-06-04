@@ -23,7 +23,7 @@
 |-------|-------|------|-------|
 | `Level232GameState` | `ScaledPricePercent` (float) | float | The game multiplies item sale price by this value. More players → lower value → harder to meet the sell-out quota. User-confirmed as a blocking issue at >6. |
 
-**Config:** `S232_PRICE_FLOOR = 0.50` (i.e. minimum 50% of original price). Clamp when the game drives it below this floor due to player count.
+**Config:** `S232_PRICE_FLOOR = 1.00` (strict policy: player count is not allowed to discount sell prices at all, so a 16-player run is no harder than ≤6 on the quota). The dump does not expose the authored 6-player curve value (`ScaledPricePercent` has no `UCurveFloat`/data-table in the header), so a measured ≤6-player floor would require live logging; until then, 1.00 is the safe "not harder" choice.
 
 ---
 
@@ -39,9 +39,21 @@ These are player-count-scaled numeric requirements, not spawn counts or progress
 | `InteractableDoor` | `ItemAmountRequired` | 10 | Door that requires a certain number of items placed on it. |
 | `LevelFunExitDoor` | `RequiredTicketMilestone` | 10 | FUN level exit door — ticket count threshold. |
 | `LevelFunExitPinger` | `ItemAmountRequired` | 10 | Same as InteractableDoor but for the pinger variant. |
-| `ChristmasPresentQuestActor` | tag-count (TArray<int32>) | 10 per entry | Cap each element of the required-present-tags array at 10. |
+| `PartyCelebrationSpeaker` | `RequiredTicketMilestone` | 10 | FUN celebration speaker ticket threshold. |
 
-**Action:** use the same `cap_props_on_classes()` pattern as elevator/generator caps. For `ChristmasPresentQuestActor`, iterate the TArray and cap individual elements.
+**Action:** use the same `cap_props_on_classes()` pattern as elevator/generator caps.
+
+## Requirement arrays (capped per element at GENERIC_OBJECTIVE_CAP)
+
+| Class | Field | Type | Notes |
+|-------|-------|------|-------|
+| `LevelFUNChunkManager` | `WarehouseRequiredCoinsTotals` | `TArray<int32>` | Per-warehouse coin requirement totals. Capped element-wise via `cap_int_array_prop()` and re-asserted by a hook on `AddWarehouseRequiredCoins`. **Live TArray mutation needs ≥7-player confirmation.** |
+
+## NOT a numeric requirement — do NOT cap via the scalar/array path
+
+| Class | Field | Type | Reason |
+|-------|-------|------|--------|
+| `ChristmasPresentQuestActor` | `RequiredPresentsTags` | `FGameplayTagContainer` | This is a *tag set*, not an int. It is the number of distinct present tags required. Safely reducing it would mean dropping tags from the container or intercepting the completion comparison — both unverified and risky. Left uncapped pending a live test; the generic `CurrentObjectives` path may still cover it if the game publishes a scaled objective. |
 
 ---
 
@@ -94,5 +106,6 @@ These are player-count-scaled numeric requirements, not spawn counts or progress
 | Generator count (`Level1ChunkManager.NumberOfGenerators`) | ≤10 | Same pattern |
 | Generic player-scaled objectives (`FLevelObjective.ObjectiveAmount` where `bScalesWithPlayers=true`) | ≤10 | Array scan across all GameStates |
 | Numeric requirement fields (FuseBoard, CoinGate, InteractableDoor, etc.) | ≤10 | Per-class property cap |
-| "All players present" gates (`bRequiresAllPlayers` on teleporters/level exits) | false when >6 possessed | Instance scan + post-hooks |
-| Level 232 sale-price discount (`ScaledPricePercent`) | ≥0.50 | Per-instance clamp on `Level232GameState` |
+| Level 232 sale-price discount (`ScaledPricePercent`) | ≥1.00 | Per-instance clamp on `Level232GameState` (strict no-discount policy) |
+| Level FUN warehouse coin requirements (`WarehouseRequiredCoinsTotals[]`) | ≤10 per element | Int-array scan + `AddWarehouseRequiredCoins` hook |
+| "All players present" gates (`bRequiresAllPlayers` on teleporters/level exits) | false when >6 possessed | Instance scan + `OnSurvivorOverlap`/`OnAllPlayersPresent`/teleporter hooks |

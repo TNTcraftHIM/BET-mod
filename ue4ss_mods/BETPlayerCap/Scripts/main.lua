@@ -18,12 +18,12 @@ local GENERIC_OBJECTIVE_CAP = 10
 --   was built for ≤6.
 local ALL_PLAYERS_GATE_CAP = 6
 -- S232_PRICE_FLOOR: Level 232 "ScaledPricePercent" decreases with more players,
---   making items too cheap to sell and the quota nearly impossible. Clamp it to
---   at least this value. 0.50 means 50% = roughly the ≤6-player minimum seen in
---   testing. Adjust if needed.
-local S232_PRICE_FLOOR = 0.50
+--   making items too cheap to sell and the quota nearly impossible. The dump does
+--   not expose the authored 6-player curve/default, so use the strict no-harder
+--   policy: do not allow player count to discount sell prices at all.
+local S232_PRICE_FLOOR = 1.00
 -- ======================================================================
-local VERSION = "2.17.0-generic-cap"
+local VERSION = "2.17.1-requirement-audit"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -428,13 +428,23 @@ local NUMERIC_CAP_CLASSES = {
     "InteractableDoor",            -- ItemAmountRequired
     "LevelFunExitDoor",            -- RequiredTicketMilestone
     "LevelFunExitPinger",          -- ItemAmountRequired
-    "ChristmasPresentQuestActor",  -- RequiredPresentsTags array (cap tag count)
+    "PartyCelebrationSpeaker",     -- RequiredTicketMilestone
 }
 local NUMERIC_CAP_PROPS = {
     RequiredFuseAmount = GENERIC_OBJECTIVE_CAP,
     CoinsRequired = GENERIC_OBJECTIVE_CAP,
     ItemAmountRequired = GENERIC_OBJECTIVE_CAP,
     RequiredTicketMilestone = GENERIC_OBJECTIVE_CAP,
+}
+
+-- == Per-class requirement arrays ==
+-- These are requirements, not supply spawns. Cap them down. Do not cap item/loot
+-- spawn arrays such as Level232 ItemSpawnRates or Level3 wire repair-item spawns.
+local INT_ARRAY_CAP_CLASSES = {
+    "LevelFUNChunkManager",         -- WarehouseRequiredCoinsTotals
+}
+local INT_ARRAY_CAP_PROPS = {
+    WarehouseRequiredCoinsTotals = GENERIC_OBJECTIVE_CAP,
 }
 
 -- == GameState-scoped generic "bScalesWithPlayers" objective array ==
@@ -487,7 +497,7 @@ local function cap_requirement_object(obj, label)
     obj = unwrap_param(obj)
     if not obj or not is_real_instance(obj) then return 0 end
     local changed = 0
-    for prop, cap in pairs(OBJECTIVE_CAP_PROPS) do
+    for prop, cap in pairs(ELEVATOR_PROPS) do
         if cap_requirement_prop(obj, prop, cap, label or "object") then
             changed = changed + 1
         end
@@ -525,6 +535,81 @@ end
 
 local function cap_numeric_requirements(reason)
     return cap_props_on_classes(NUMERIC_CAP_CLASSES, NUMERIC_CAP_PROPS, reason)
+end
+
+local function read_array_num(arr)
+    return safe("ArrayNum", function()
+        if arr.GetArrayNum then return arr:GetArrayNum() end
+        return #arr
+    end) or 0
+end
+
+local function cap_int_array_prop(owner, prop, cap, reason)
+    if not ENABLE_OBJECTIVE_CAP or not owner or not is_real_instance(owner) then return 0 end
+    cap = cap or GENERIC_OBJECTIVE_CAP
+    local arr = safe("IntArrayRead_" .. prop, function() return owner[prop] end)
+    if not arr then return 0 end
+    local n = read_array_num(arr)
+    if n <= 0 then return 0 end
+    local changed = 0
+    local label = reason or prop
+
+    local function cap_entry(idx, value)
+        local v = unwrap_param(value)
+        if type(v) ~= "number" then return end
+        if v <= cap then return end
+        local ok = safe("IntArrayWrite_" .. prop, function() arr[idx] = cap return true end)
+        if not ok then return end
+        local now = safe("IntArrayVerify_" .. prop, function()
+            local reread = owner[prop]
+            local rv = reread and reread[idx]
+            rv = unwrap_param(rv)
+            return rv
+        end)
+        if type(now) == "number" and now <= cap then
+            changed = changed + 1
+            log(string.format("[OBJCAP] %s.%s[%s] %s -> %d (%s)",
+                label, prop, tostring(idx), tostring(v), cap, object_label(owner)))
+        else
+            log(string.format("[OBJCAP] %s.%s[%s] write did not stick (old=%s actual=%s cap=%d)",
+                label, prop, tostring(idx), tostring(v), tostring(now), cap))
+        end
+    end
+
+    local iter_ok = safe("IntArrayEach_" .. prop, function()
+        if arr.ForEach then
+            arr:ForEach(function(Index, Elem) cap_entry(Index, Elem) end)
+            return true
+        end
+        return false
+    end)
+    if not iter_ok then
+        for i = 1, n do
+            safe("IntArrayIdx_" .. prop, function() cap_entry(i, arr[i]) return true end)
+        end
+    end
+    if changed > 0 then
+        safe("intarray_fnu", function() owner:ForceNetUpdate() return true end)
+    end
+    return changed
+end
+
+local function cap_int_array_requirements(reason)
+    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local total = 0
+    for _, class_name in ipairs(INT_ARRAY_CAP_CLASSES) do
+        local list = safe("IntArrayFind_" .. class_name, function() return FindAllOf(class_name) end)
+        if list then
+            for _, obj in pairs(list) do
+                if is_real_instance(obj) then
+                    for prop, cap in pairs(INT_ARRAY_CAP_PROPS) do
+                        total = total + cap_int_array_prop(obj, prop, cap, reason or class_name)
+                    end
+                end
+            end
+        end
+    end
+    return total
 end
 
 -- Force bRequiresAllPlayers=false on teleporters and level exits when there are
@@ -724,6 +809,51 @@ local function register_generic_objective_hook(path)
     end
 end
 
+local function register_int_array_cap_hook(path, prop)
+    local ok = safe("ObjCapHook_" .. path, function()
+        RegisterHook(path, function(self, ...)
+            local obj = unwrap_param(self)
+            if not obj or not is_real_instance(obj) then return end
+            ExecuteInGameThread(function()
+                if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return end
+                if not is_real_instance(obj) then return end
+                if not objective_cap_hook_fired[path] then
+                    objective_cap_hook_fired[path] = true
+                    log("[OBJCAP] hook fired: " .. path .. " on " .. object_label(obj))
+                end
+                cap_int_array_prop(obj, prop, GENERIC_OBJECTIVE_CAP, path)
+            end)
+        end)
+        return true
+    end)
+    if ok then
+        log("[OBJCAP] hook registered: " .. path)
+    else
+        log("[OBJCAP] hook unavailable: " .. path)
+    end
+end
+
+local function register_all_players_gate_hook(path)
+    local ok = safe("GateHook_" .. path, function()
+        RegisterHook(path, function(self, ...)
+            ExecuteInGameThread(function()
+                if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return end
+                if not objective_cap_hook_fired[path] then
+                    objective_cap_hook_fired[path] = true
+                    log("[GATE] hook fired: " .. path)
+                end
+                cap_all_players_gates(path)
+            end)
+        end)
+        return true
+    end)
+    if ok then
+        log("[GATE] hook registered: " .. path)
+    else
+        log("[GATE] hook unavailable: " .. path)
+    end
+end
+
 local function ensure_objective_cap_hooks()
     if objective_cap_hooks_registered or not ENABLE_OBJECTIVE_CAP then return end
     objective_cap_hooks_registered = true
@@ -743,8 +873,12 @@ local function ensure_objective_cap_hooks()
     -- The following hooks re-assert caps at points where the game re-initializes
     -- or re-evaluates these values during gameplay (not just at level start).
     register_cap_hook("/Script/BETGame.FuseBoard:OnFuseBoardInitialized", NUMERIC_CAP_PROPS)
-    register_cap_hook("/Script/BETGame.Elevator_Base:CheckForPlayersInElevator", ELEVATOR_PROPS)  -- re-assert after
     register_generic_objective_hook("/Script/BETGame.Level232GameState:OnRep_CurrentQuota")
+    register_int_array_cap_hook("/Script/BETGame.LevelFUNChunkManager:AddWarehouseRequiredCoins", "WarehouseRequiredCoinsTotals")
+    register_all_players_gate_hook("/Script/BETGame.LevelExitBase:OnSurvivorOverlap")
+    register_all_players_gate_hook("/Script/BETGame.LevelExitBase:OnAllPlayersPresent")
+    register_all_players_gate_hook("/Script/BETGame.InteractableTeleporter:OnActivationStateChange")
+    register_all_players_gate_hook("/Script/BETGame.InteractableTeleporter:AreAllPlayersPresent")
 end
 
 ExecuteInGameThread(function()
@@ -752,6 +886,7 @@ ExecuteInGameThread(function()
     pcall(cap_known_objective_requirements, "startup")
     pcall(cap_generator_requirements, "startup")
     pcall(cap_numeric_requirements, "startup")
+    pcall(cap_int_array_requirements, "startup")
     pcall(cap_all_players_gates, "startup")
     pcall(cap_s232_price, "startup")
     pcall(cap_generic_scaled_objectives, "startup")
@@ -1676,6 +1811,7 @@ local function run_monitor()
             cap_known_objective_requirements("level-detect")
             cap_generator_requirements("level-detect")
             cap_numeric_requirements("level-detect")
+            cap_int_array_requirements("level-detect")
             cap_all_players_gates("level-detect")
             cap_s232_price("level-detect")
             cap_generic_scaled_objectives("level-detect")
@@ -1740,6 +1876,7 @@ local function run_monitor()
         cap_known_objective_requirements("monitor")
         cap_generator_requirements("monitor")
         cap_numeric_requirements("monitor")
+        cap_int_array_requirements("monitor")
         cap_all_players_gates("monitor")
         cap_s232_price("monitor")
         cap_generic_scaled_objectives("monitor")
