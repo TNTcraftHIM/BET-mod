@@ -22,16 +22,12 @@ local ALL_PLAYERS_GATE_CAP = 6
 --   increases resource/supply counts; it never caps them down.
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
--- S232_PRICE_SCALE: Level 232 "ScaledPricePercent" (item sell-price multiplier at the
---   checkout counter). Players grab items for free, then sell them to meet a ~$1000
---   quota. ScaledPricePercent means sell-as-a-fraction-of-face-value. More players →
---   the game may lower or raise this. The dump cannot prove the authored 6-player
---   value or direction.
---   For >6 players, ScaledPricePercent is scaled UP from its first observed runtime
---   value proportional to players / SUPPLY_BASE_PLAYERS (same tracked-base model as
---   confirmed supply fields), so selling the same items yields MORE money per player
---   and the quota becomes easier.
-local S232_PRICE_FLOOR = nil  -- disabled: use proportional scale-up instead
+-- S232_PRICE_FLOOR: Level 232 "ScaledPricePercent" (item sell-price multiplier).
+--   NOT MODIFIED — the dump cannot prove the authored 6-player value or direction,
+--   and touching it risks making things harder. Level 232 instead gets easier via
+--   ItemSpawnRates supply scaling (more items to sell = more money). The function
+--   logs the current value once for diagnostics.
+local S232_PRICE_FLOOR = nil  -- disabled: ScaledPricePercent is not modified
 -- ======================================================================
 local VERSION = "2.18.0-dynamic-six-player-baseline"
 
@@ -833,39 +829,30 @@ local function cap_all_players_gates(reason)
     return total
 end
 
--- Level 232: scale ScaledPricePercent UP for >6 players from first observed value.
--- Players grab items for free, then sell at a checkout counter to meet a quota
--- (~$1000). ScaledPricePercent is the sell-as-a-fraction-of-face-value multiplier;
--- raising it makes the same items yield more money, making the quota easier.
+-- Level 232: ScaledPricePercent is NOT modified. We cannot prove the authored
+-- 6-player value or direction from the dump, and the user confirmed that changing
+-- it risks making things harder instead of easier. Instead, Level 232 gets more
+-- items to sell via the ItemSpawnRates supply scaling (more items = more money).
+-- This function only logs the current value for diagnostics.
+local s232_price_logged = false
 local function cap_s232_price(reason)
     if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
-    local players = effective_player_count()
-    if players <= SUPPLY_BASE_PLAYERS then return 0 end
-    local factor = players / SUPPLY_BASE_PLAYERS
-    local total = 0
     for _, class_name in ipairs(S232_PRICE_CLASSES) do
         local list = safe("S232F_" .. class_name, function() return FindAllOf(class_name) end)
         if list then
             for _, obj in pairs(list) do
                 if is_real_instance(obj) then
                     local v = safe("S232R_" .. class_name, function() return obj.ScaledPricePercent end)
-                    if type(v) == "number" and v > 0 then
-                        local key = supply_original_key(obj, "ScaledPricePercent")
-                        local base = supply_scaled_original[key] or v
-                        supply_scaled_original[key] = base
-                        local target = ceil_int(base * factor * 100) / 100  -- round to cent
-                        if target <= v then goto continue end
-                        safe("S232W_" .. class_name, function() obj.ScaledPricePercent = target return true end)
-                        total = total + 1
-                        log(string.format("[S232] %s.ScaledPricePercent %.3f -> %.2f (base=%.3f factor=%.2f %s)",
-                            class_name, v, target, base, factor, object_label(obj)))
+                    if type(v) == "number" and not s232_price_logged then
+                        log(string.format("[S232] %s.ScaledPricePercent = %.4f (read-only, not modified; %s)",
+                            class_name, v, reason or "monitor"))
+                        s232_price_logged = true
                     end
                 end
-                ::continue::
             end
         end
     end
-    return total
+    return 0
 end
 
 local function cap_level_objective_array(owner, prop, reason)

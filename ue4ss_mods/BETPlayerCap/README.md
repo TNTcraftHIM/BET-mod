@@ -22,7 +22,7 @@ it to use the local-only `Ctrl+N` self no-collision toggle.
   generator and non-curve scalar requirements still use bounded caps; curve-backed
   requirements such as `FuseBoard.PlayerCountFuseCurve` are capped to their runtime
   6-player curve value; confirmed supply fields are multiplied upward for >6 players;
-  and Level 232 sell prices are scaled up for >6 players to ease the quota.
+  and Level 232 sell-price multiplier is logged (not modified) for diagnostics.
 - **"All players" gate disabler:** when more than 6 players are present, teleporters
   (`AInteractableTeleporter`) and level exits (`ALevelExitBase`) have their
   `bRequiresAllPlayers` flag forced to false — otherwise a group of 7–16 cannot fit on

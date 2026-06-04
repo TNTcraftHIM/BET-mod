@@ -18,13 +18,13 @@
 
 ---
 
-## Level 232 — ScaledPricePercent scale-up
+## Level 232 — ScaledPricePercent (read-only)
 
 | Class | Field | Type | Notes |
 |-------|-------|------|-------|
-| `Level232GameState` | `ScaledPricePercent` (float) | float | Item sell-price multiplier. Direction unknown in dump; user reports Level 232 requires earning ~$1000 by selling free-to-grab items at a counter. |
+| `Level232GameState` | `ScaledPricePercent` (float) | float | Item sell-price multiplier ("coupon"). Direction and 6-player baseline unknown from dump. |
 
-**Action:** `ScaledPricePercent` is now scaled UP for >6 players from its first observed runtime value by `players/6` (same tracked-base model as other supply fields), making items sell for more money and the quota easier to meet. The old v2.17 hard 1.00 clamp is removed — the dump cannot prove whether 1.00 helps or hurts, and the old clamp may have blocked a game-authored discount that was *helping* larger groups.
+**Action:** NOT modified. The dump cannot prove the authored 6-player value or direction. Level 232 instead gets easier via `ItemSpawnRates` supply scaling (more items to sell = more money). The function logs the current value once for diagnostics. May be revisited after live ≥7-player observation.
 
 ---
 
@@ -77,7 +77,7 @@ bounded fallback until live logging measures the exact authored values:
 | `ALevel3ChunkManager` | `PlayerCountToWireCurve`, `PlayerCountToRepairItemMultiplier` | UCurveFloat + multiplier name | Level 3 wire/repair-item spawn scaling. Covered by the generic `CurrentObjectives` path if these feed into it; otherwise needs explicit cap. |
 | `AFuseBoard` | `PlayerCountFuseCurve` (UCurveFloat) → `RequiredFuseAmount` | Curve indexed by player count, then written to RequiredFuseAmount | The cap on RequiredFuseAmount above covers the result of this curve. |
 | `ALevelNeg1Manager` | `EntitySpawnChancePerPlayer` + `MaxShadowSpawnAmount` | Per-player float with fixed ceiling | Shadow spawn rate scales but is bounded by MaxShadowSpawnAmount (fixed). Not a blocking gate, just harder at >6. **Not capped** — this is monster difficulty, not an objective requirement. |
-| `Level232GameState` | `ScaledPricePercent` | Scaled by player count | See above: scaled UP for >6 players proportional to `players/6`. |
+| `Level232GameState` | `ScaledPricePercent` | Scaled by player count | Not modified; logged once for diagnostics. May revisit after live testing. |
 
 ---
 
@@ -125,6 +125,6 @@ and hazard fields remain untouched unless live testing proves a separate need.
 | Generic player-scaled objectives (`FLevelObjective.ObjectiveAmount` where `bScalesWithPlayers=true`) | ≤10 until a per-objective baseline is measured | Array scan across all GameStates |
 | Numeric requirement fields (CoinGate, InteractableDoor, FUN ticket doors, etc.) | ≤10 until per-field live baselines are measured | Per-class property cap |
 | Level FUN warehouse coin requirements (`WarehouseRequiredCoinsTotals[]`) | ≤10 per element | Int-array scan + `AddWarehouseRequiredCoins` hook |
-| Level 232 sale-price multiplier (`ScaledPricePercent`) | scale up by `players / 6` when >6 (first-observed base, same model as supply scaling) | Per-instance proportional scale-up instead of the old 1.00 floor |
+| Level 232 sell-price multiplier (`ScaledPricePercent`) | not modified (read-only diagnostics) | Logs current value once; ItemSpawnRates supply scaling handles the difficulty instead |
 | "All players present" gates (`bRequiresAllPlayers` on teleporters/level exits) | false when >6 possessed | Instance scan + `OnSurvivorOverlap`/`OnAllPlayersPresent`/teleporter hooks |
 | Confirmed supply fields (Level 1 almond water, Level 3 lootbox wire/tape counts, Level 232 item spawn ranges) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base to avoid repeated multiplication |
