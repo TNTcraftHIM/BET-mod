@@ -29,7 +29,7 @@ local ENABLE_SUPPLY_SCALING = true
 --   logs the current value once for diagnostics.
 local S232_PRICE_FLOOR = nil  -- disabled: ScaledPricePercent is not modified
 -- ======================================================================
-local VERSION = "2.19.0-comprehensive-scaling"
+local VERSION = "2.19.1-comprehensive-scaling"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -724,6 +724,7 @@ end
 local l6_scale_logged = false
 local function cap_level6_puzzle_scale(reason)
     if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    if effective_player_count() <= ALL_PLAYERS_GATE_CAP then return 0 end
     local list = safe("L6Puzzle", function() return FindAllOf("ALevel6PuzzleManager") end)
     if not list then return 0 end
     local total = 0

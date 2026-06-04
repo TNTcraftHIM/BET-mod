@@ -4,7 +4,7 @@
 
 ## Tested target
 
-The last known confirmed build is **v2.19.0** against the Steam Windows release of
+The last known confirmed build is **v2.19.1** against the Steam Windows release of
 **Backrooms: Escape Together** using Unreal Engine **5.7.x** and UE4SS **3.0.x**.
 The exact engine version, UE4SS runtime files, and signatures may change as the game
 updates — consult the changelog for the most recent tested configuration.

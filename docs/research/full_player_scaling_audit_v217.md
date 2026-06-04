@@ -1,9 +1,9 @@
-# Full Player-Scaling Audit (v2.19)
+# Full Player-Scaling Audit (v2.19.1)
 
 > Line-by-line read of every `LevelNChunkManager` / `GameState` / `GameMode` /
 > progression actor in `BETGame.hpp` (2026-06-02 dump, UE 5.7 MSVC shipping build).
 > This is the data that drives the per-class caps, curve-backed baselines,
-> supply scaling, and gate-disables in main.lua v2.19+.
+> supply scaling, and gate-disables in main.lua v2.19.1+.
 
 ---
 
@@ -114,7 +114,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 
 ---
 
-## Summary of all caps/scales applied by v2.19+ mod logic
+## Summary of all caps/scales applied by v2.19.1+ mod logic
 
 | What | Cap / scale value | Method |
 |------|-------------------|--------|
@@ -127,4 +127,5 @@ and hazard fields remain untouched unless live testing proves a separate need.
 | Level FUN warehouse coin requirements (`WarehouseRequiredCoinsTotals[]`) | ≤10 per element | Int-array scan + `AddWarehouseRequiredCoins` hook |
 | Level 232 sell-price multiplier (`ScaledPricePercent`) | not modified (read-only diagnostics) | Logs current value once; ItemSpawnRates supply scaling handles the difficulty instead |
 | "All players present" gates (`bRequiresAllPlayers` on teleporters/level exits) | false when >6 possessed | Instance scan + `OnSurvivorOverlap`/`OnAllPlayersPresent`/teleporter hooks |
+| Level 6 puzzle difficulty (`ALevel6PuzzleManager.bScaleWithPlayers`) | `false` when >6 possessed (no-op at ≤6; v2.19.1 guard) | Instance scan with `effective_player_count() > ALL_PLAYERS_GATE_CAP` guard |
 | Confirmed supply fields (Level 1 almond water, Level 3 lootbox wire/tape counts, Level 232 item spawn ranges) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base to avoid repeated multiplication |

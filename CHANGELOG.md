@@ -6,6 +6,14 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.1 (2026-06-04)
+
+- **Bugfix: Level 6 puzzle scale guard.** `cap_level6_puzzle_scale()` previously
+  forced `bScaleWithPlayers=false` unconditionally, which could make the museum
+  puzzle easier than intended at ≤6 players (where scale is normal difficulty).
+  Now guarded with `effective_player_count() > ALL_PLAYERS_GATE_CAP` — only
+  disables scaling when >6 possessed, matching every other cap function.
+
 ## v2.19.0-comprehensive-scaling (2026-06-04)
 
 ### Full-level audit pass — every level checked against dump, new caps & supplies
