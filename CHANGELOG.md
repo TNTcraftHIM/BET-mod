@@ -14,7 +14,7 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
   Now guarded with `effective_player_count() > ALL_PLAYERS_GATE_CAP` — only
   disables scaling when >6 possessed, matching every other cap function.
 
-## v2.19.0-comprehensive-scaling (2026-06-04)
+## v2.19.1-comprehensive-scaling (2026-06-04)
 
 ### Full-level audit pass — every level checked against dump, new caps & supplies
 
