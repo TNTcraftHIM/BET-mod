@@ -28,6 +28,17 @@ available yet.
   - Level 1 `NumberOfAlmondWater`
   - Level 3 lootbox wire/tape counts (`SingleFuseLootbox*`, `MultiFuseLootbox*`)
   - Level 232 `ItemSpawnRates.PickupSpawnRange` / `GrabbableSpawnRange`
+- **Level 232 `ScaledPricePercent` now scaled UP for >6 players** (replaces the v2.17
+  hard 1.00 floor). The dump cannot prove whether this sell-price multiplier increases
+  or decreases with player count, and the old 1.00 clamp may have been making things
+  *harder* if the game already discounts items for larger groups. Now, for >6 players,
+  `ScaledPricePercent` is scaled up from its first observed runtime value by `players/6`
+  (same tracked-base model as other supply fields), so items sell for more money and
+  the quota becomes easier.
+- **Level 3 wire requirements remain diagnostic/off by default.** The dump shows
+  `PlayerCountToWireCurve` and sector wire repair counts, but cannot prove whether those
+  counts represent required repairs versus available repairable wires. Do not cap them
+  until a live run confirms they are requirements, not supply.
 - **Still NOT supply-scaled by default:** monster difficulty fields and Level 3
   `PlayerCountToRepairItemMultiplier`/`RepairItemMultiplier`/spawn chances. Those may already
   be player-count-aware or are difficulty knobs; changing them needs live values first.
