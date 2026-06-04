@@ -17,13 +17,18 @@ local GENERIC_OBJECTIVE_CAP = 10
 --   exits (ALevelExitBase), so a 7–16 player group is not blocked by geometry that
 --   was built for ≤6.
 local ALL_PLAYERS_GATE_CAP = 6
+-- SUPPLY_BASE_PLAYERS: when there are more players than this, confirmed supply
+--   fields are multiplied by possessed_players / SUPPLY_BASE_PLAYERS. This only
+--   increases resource/supply counts; it never caps them down.
+local SUPPLY_BASE_PLAYERS = 6
+local ENABLE_SUPPLY_SCALING = true
 -- S232_PRICE_FLOOR: Level 232 "ScaledPricePercent" decreases with more players,
 --   making items too cheap to sell and the quota nearly impossible. The dump does
 --   not expose the authored 6-player curve/default, so use the strict no-harder
 --   policy: do not allow player count to discount sell prices at all.
 local S232_PRICE_FLOOR = 1.00
 -- ======================================================================
-local VERSION = "2.17.1-requirement-audit"
+local VERSION = "2.18.0-dynamic-six-player-baseline"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -376,7 +381,7 @@ end
 ExecuteInGameThread(function() pcall(register_widget_cap_hooks) end)
 
 ---------------------------------------------------------------------------
--- OBJECTIVE REQUIREMENT CAP (v2.17)
+-- OBJECTIVE REQUIREMENT / SUPPLY HANDLING
 --
 -- Design principle: same difficulty as ≤6 players. When a player-count-scaled
 -- field or "all players" gate exceeds the vanilla-supported range, cap or disable
@@ -386,6 +391,9 @@ ExecuteInGameThread(function() pcall(register_widget_cap_hooks) end)
 local objective_cap_changed = {}
 local objective_cap_hooks_registered = false
 local objective_cap_hook_fired = {}
+local supply_scaled_original = {}
+-- Forward declarations for helpers defined later in the file but used by cap logic.
+local collect_players
 
 -- == Elevator presence gate ==
 local ELEVATOR_CLASSES = {
@@ -422,8 +430,7 @@ local GENERATOR_CAP_PROPS = {
 
 -- == Per-class numeric caps for player-scaled objective requirements ==
 local NUMERIC_CAP_CLASSES = {
-    "FuseBoard",                   -- PlayerCountFuseCurve → RequiredFuseAmount
-    "RepairableElectricalBox",     -- RequiredFuseAmount
+    "RepairableElectricalBox",     -- RequiredFuseAmount (no player-count curve exposed)
     "CoinGate",                    -- CoinsRequired
     "InteractableDoor",            -- ItemAmountRequired
     "LevelFunExitDoor",            -- RequiredTicketMilestone
@@ -445,6 +452,47 @@ local INT_ARRAY_CAP_CLASSES = {
 }
 local INT_ARRAY_CAP_PROPS = {
     WarehouseRequiredCoinsTotals = GENERIC_OBJECTIVE_CAP,
+}
+
+-- == Confirmed supply/resource fields ==
+-- These are not objective requirements. For >6 players, scale them UP from their
+-- original runtime value so larger groups get more supplies instead of less per head.
+-- Each object/field is scaled from the first value we observe, not repeatedly multiplied.
+local SUPPLY_SCALE_CLASSES = {
+    "Level1ChunkManager",            -- NumberOfAlmondWater
+    "Level1ChunkManagerDebug",
+    "Level3ChunkManager",            -- repair supplies / lootbox contents
+    "Level232ChunkManager",          -- ItemSpawnRates FIntPoint ranges (handled specially)
+}
+local SUPPLY_SCALE_PROPS = {
+    NumberOfAlmondWater = true,
+    SingleFuseLootboxWireSpawnCount = true,
+    SingleFuseLootboxTapeSpawnCount = true,
+    MultiFuseLootboxWireSpawnCount = true,
+    MultiFuseLootboxTapeSpawnCount = true,
+}
+
+-- Curve-backed requirement fields where the authored curve can tell us the 6-player cap.
+local CURVE_REQUIREMENT_CLASSES = {
+    "FuseBoard",
+}
+
+local CURVE_REQUIREMENT_SPECS = {
+    {
+        amountProp = "RequiredFuseAmount",
+        curveProp = "PlayerCountFuseCurve",
+        fallbackCap = GENERIC_OBJECTIVE_CAP,
+    },
+}
+
+-- Level 3 wire requirement is ambiguous in the dump: sector counts are likely required
+-- repair wires, while repair-item multipliers / lootbox counts are supply. Keep the
+-- requirement cap diagnostic/off until live testing confirms these fields are targets.
+local ENABLE_LEVEL3_WIRE_REQUIREMENT_CAP = false
+local LEVEL3_WIRE_REQUIREMENT_CAP_PROPS = {
+    Sector1WallWireRepairCount = GENERIC_OBJECTIVE_CAP,
+    Sector2WallWireRepairCount = GENERIC_OBJECTIVE_CAP,
+    Sector3WallWireRepairCount = GENERIC_OBJECTIVE_CAP,
 }
 
 -- == GameState-scoped generic "bScalesWithPlayers" objective array ==
@@ -516,6 +564,147 @@ local function cap_props_on_classes(classes, props, reason)
                     for prop, cap in pairs(props) do
                         if cap_requirement_prop(obj, prop, cap, reason or class_name) then
                             total = total + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return total
+end
+
+local function effective_player_count()
+    local players = collect_players and collect_players() or {}
+    local n = #players
+    if n < 1 then n = 1 end
+    return n
+end
+
+local function ceil_int(v)
+    return math.floor(v + 0.999999)
+end
+
+local function curve_value_at(curve, x, label)
+    if not curve then return nil end
+    return safe("CurveGet_" .. tostring(label), function()
+        if curve.GetFloatValue then return curve:GetFloatValue(x) end
+        return nil
+    end)
+end
+
+local function cap_curve_requirement_object(obj, spec, label)
+    if not ENABLE_OBJECTIVE_CAP or not obj or not is_real_instance(obj) then return false end
+    local old = safe("CurveReqAmount_" .. spec.amountProp, function() return obj[spec.amountProp] end)
+    if type(old) ~= "number" then return false end
+    local curve = safe("CurveReqCurve_" .. spec.curveProp, function() return obj[spec.curveProp] end)
+    local cap = curve_value_at(curve, ALL_PLAYERS_GATE_CAP, spec.curveProp) or spec.fallbackCap or GENERIC_OBJECTIVE_CAP
+    if type(cap) ~= "number" then cap = spec.fallbackCap or GENERIC_OBJECTIVE_CAP end
+    cap = ceil_int(cap)
+    if cap < 1 then cap = 1 end
+    if old <= cap then return false end
+    return cap_requirement_prop(obj, spec.amountProp, cap, label or "curve")
+end
+
+local function cap_curve_requirements(reason)
+    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local total = 0
+    for _, class_name in ipairs(CURVE_REQUIREMENT_CLASSES) do
+        local list = safe("CurveReqFind_" .. class_name, function() return FindAllOf(class_name) end)
+        if list then
+            for _, obj in pairs(list) do
+                if is_real_instance(obj) then
+                    for _, spec in ipairs(CURVE_REQUIREMENT_SPECS) do
+                        if cap_curve_requirement_object(obj, spec, reason or class_name) then total = total + 1 end
+                    end
+                end
+            end
+        end
+    end
+    return total
+end
+
+local function supply_original_key(obj, prop)
+    return object_label(obj) .. ":" .. prop
+end
+
+local function scale_supply_number(obj, prop, factor, reason)
+    if not ENABLE_SUPPLY_SCALING or not obj or not is_real_instance(obj) then return false end
+    local old = safe("SupplyRead_" .. prop, function() return obj[prop] end)
+    if type(old) ~= "number" or old <= 0 then return false end
+    local key = supply_original_key(obj, prop)
+    local base = supply_scaled_original[key] or old
+    supply_scaled_original[key] = base
+    local target = ceil_int(base * factor)
+    if target <= old then return false end
+    safe("SupplyWrite_" .. prop, function() obj[prop] = target return true end)
+    local now = safe("SupplyVerify_" .. prop, function() return obj[prop] end)
+    if type(now) == "number" and now >= target then
+        log(string.format("[SUPPLY] %s.%s %s -> %d (base=%s factor=%.2f %s)",
+            reason or "supply", prop, tostring(old), target, tostring(base), factor, object_label(obj)))
+        safe("supply_fnu", function() obj:ForceNetUpdate() return true end)
+        return true
+    end
+    log(string.format("[SUPPLY] %s.%s write did not stick (old=%s target=%d actual=%s)",
+        reason or "supply", prop, tostring(old), target, tostring(now)))
+    return false
+end
+
+local function scale_fintpoint_range(owner, rangeProp, factor, reason, key_owner, key_prefix)
+    local r = safe("SupplyRangeRead_" .. rangeProp, function() return owner[rangeProp] end)
+    if not r then return false end
+    local x = safe("SupplyRangeX_" .. rangeProp, function() return r.X or r.x end)
+    local y = safe("SupplyRangeY_" .. rangeProp, function() return r.Y or r.y end)
+    if type(x) ~= "number" or type(y) ~= "number" then return false end
+    key_owner = key_owner or owner
+    key_prefix = key_prefix or rangeProp
+    local keyx = supply_original_key(key_owner, key_prefix .. ".X")
+    local keyy = supply_original_key(key_owner, key_prefix .. ".Y")
+    local basex = supply_scaled_original[keyx] or x
+    local basey = supply_scaled_original[keyy] or y
+    supply_scaled_original[keyx] = basex
+    supply_scaled_original[keyy] = basey
+    local tx = ceil_int(basex * factor)
+    local ty = ceil_int(basey * factor)
+    if tx <= x and ty <= y then return false end
+    local ok = safe("SupplyRangeWrite_" .. rangeProp, function()
+        if r.X ~= nil then r.X = tx else r.x = tx end
+        if r.Y ~= nil then r.Y = ty else r.y = ty end
+        return true
+    end)
+    if ok then
+        log(string.format("[SUPPLY] %s.%s (%s,%s) -> (%d,%d) (factor=%.2f %s)",
+            reason or "supply", key_prefix, tostring(x), tostring(y), tx, ty, factor, object_label(key_owner)))
+        safe("supply_range_fnu", function() key_owner:ForceNetUpdate() return true end)
+        return true
+    end
+    return false
+end
+
+local function scale_level232_item_spawn_rates(obj, factor, reason)
+    local rates = safe("Supply232Rates", function() return obj.ItemSpawnRates end)
+    if not rates then return 0 end
+    local changed = 0
+    if scale_fintpoint_range(rates, "PickupSpawnRange", factor, reason or "Level232ItemSpawnRates", obj, "ItemSpawnRates.PickupSpawnRange") then changed = changed + 1 end
+    if scale_fintpoint_range(rates, "GrabbableSpawnRange", factor, reason or "Level232ItemSpawnRates", obj, "ItemSpawnRates.GrabbableSpawnRange") then changed = changed + 1 end
+    return changed
+end
+
+local function scale_supply_for_more_players(reason)
+    if not ENABLE_SUPPLY_SCALING or not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local players = effective_player_count()
+    if players <= SUPPLY_BASE_PLAYERS then return 0 end
+    local factor = players / SUPPLY_BASE_PLAYERS
+    local total = 0
+    for _, class_name in ipairs(SUPPLY_SCALE_CLASSES) do
+        local list = safe("SupplyFind_" .. class_name, function() return FindAllOf(class_name) end)
+        if list then
+            for _, obj in pairs(list) do
+                if is_real_instance(obj) then
+                    if class_name == "Level232ChunkManager" then
+                        total = total + scale_level232_item_spawn_rates(obj, factor, reason or class_name)
+                    else
+                        for prop, _ in pairs(SUPPLY_SCALE_PROPS) do
+                            if scale_supply_number(obj, prop, factor, reason or class_name) then total = total + 1 end
                         end
                     end
                 end
@@ -833,6 +1022,53 @@ local function register_int_array_cap_hook(path, prop)
     end
 end
 
+local function register_curve_requirement_hook(path)
+    local ok = safe("CurveReqHook_" .. path, function()
+        RegisterHook(path, function(self, ...)
+            local obj = unwrap_param(self)
+            if not obj or not is_real_instance(obj) then return end
+            ExecuteInGameThread(function()
+                if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return end
+                if not is_real_instance(obj) then return end
+                if not objective_cap_hook_fired[path] then
+                    objective_cap_hook_fired[path] = true
+                    log("[OBJCAP] hook fired: " .. path .. " on " .. object_label(obj))
+                end
+                for _, spec in ipairs(CURVE_REQUIREMENT_SPECS) do
+                    cap_curve_requirement_object(obj, spec, path)
+                end
+            end)
+        end)
+        return true
+    end)
+    if ok then
+        log("[OBJCAP] hook registered: " .. path)
+    else
+        log("[OBJCAP] hook unavailable: " .. path)
+    end
+end
+
+local function register_supply_scale_hook(path)
+    local ok = safe("SupplyHook_" .. path, function()
+        RegisterHook(path, function(self, ...)
+            ExecuteInGameThread(function()
+                if not ENABLE_SUPPLY_SCALING or not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return end
+                if not objective_cap_hook_fired[path] then
+                    objective_cap_hook_fired[path] = true
+                    log("[SUPPLY] hook fired: " .. path)
+                end
+                scale_supply_for_more_players(path)
+            end)
+        end)
+        return true
+    end)
+    if ok then
+        log("[SUPPLY] hook registered: " .. path)
+    else
+        log("[SUPPLY] hook unavailable: " .. path)
+    end
+end
+
 local function register_all_players_gate_hook(path)
     local ok = safe("GateHook_" .. path, function()
         RegisterHook(path, function(self, ...)
@@ -869,10 +1105,11 @@ local function ensure_objective_cap_hooks()
     register_objective_cap_hook("/Script/BETGame.Elevator_Base:CheckForPlayersInElevator")
     register_objective_cap_hook("/Script/BETGame.Elevator_Base:OnObjectiveCompleted")
     register_cap_hook("/Script/BETGame.BETChunkManagerBase:GenerateChunks", GENERATOR_CAP_PROPS)
+    register_supply_scale_hook("/Script/BETGame.BETChunkManagerBase:GenerateChunks")
     register_generic_objective_hook("/Script/BETGame.MultiplayerGameState:OnRep_CurrentObjectives")
     -- The following hooks re-assert caps at points where the game re-initializes
     -- or re-evaluates these values during gameplay (not just at level start).
-    register_cap_hook("/Script/BETGame.FuseBoard:OnFuseBoardInitialized", NUMERIC_CAP_PROPS)
+    register_curve_requirement_hook("/Script/BETGame.FuseBoard:OnFuseBoardInitialized")
     register_generic_objective_hook("/Script/BETGame.Level232GameState:OnRep_CurrentQuota")
     register_int_array_cap_hook("/Script/BETGame.LevelFUNChunkManager:AddWarehouseRequiredCoins", "WarehouseRequiredCoinsTotals")
     register_all_players_gate_hook("/Script/BETGame.LevelExitBase:OnSurvivorOverlap")
@@ -885,8 +1122,10 @@ ExecuteInGameThread(function()
     pcall(ensure_objective_cap_hooks)
     pcall(cap_known_objective_requirements, "startup")
     pcall(cap_generator_requirements, "startup")
+    pcall(cap_curve_requirements, "startup")
     pcall(cap_numeric_requirements, "startup")
     pcall(cap_int_array_requirements, "startup")
+    pcall(scale_supply_for_more_players, "startup")
     pcall(cap_all_players_gates, "startup")
     pcall(cap_s232_price, "startup")
     pcall(cap_generic_scaled_objectives, "startup")
@@ -924,7 +1163,7 @@ local NUDGE_STEP   = 100   -- horizontal world units per Ctrl+Arrow
 local NUDGE_STEP_Z = 100   -- vertical world units per Ctrl+PageUp/PageDown
 
 -- v2.8 post-travel summon timing. The 2026-05-31 7-player level-switch test showed
--- the OLD post-travel summon firing too early: right after Ctrl+H it tried to gather
+-- the OLD post-travel summon firing too early: right after a forced level switch it tried to gather
 -- while the host pawn wasn't re-resolved yet ("Could not resolve host pawn — aborting"
 -- on Level 3/4) and while stuck players hadn't possessed (only 5 of 7 readable on
 -- Level 1). So instead of a fixed "2 ticks after detect", we now WAIT for the group to
@@ -935,7 +1174,7 @@ local summon_wait_count = 0     -- ticks waited so far for the current armed sum
 
 -- v2.6 LEVEL-SWITCH (test tool). BET travels between levels via ProcessServerTravel
 -- (seamless), confirmed in BET.log. We use the same path so all clients are carried
--- along (no drop). Ctrl+H steps to the next map in LEVEL_MAPS below.
+-- along (no drop). Ctrl+K/L step through the map list below.
 --
 -- IMPORTANT (verified 2026-05-31 against the game's own BETGame.hpp class dump):
 -- THIS LIST IS *NOT* THE CANONICAL LEVEL ORDER. BET has no fixed numeric sequence.
@@ -964,9 +1203,14 @@ local LEVEL_MAPS = {
     "/Game/Maps/MainLevels/Level_Hub/L_Level_Hub",
     "/Game/Maps/MainLevels/Level_Neg1/L_Level_Neg1",
 }
-local level_cycle_idx = 0          -- 0 = before first press; advances each Ctrl+H
+local level_cycle_idx = 0          -- 0 = before first press; advances each Ctrl+K/L level switch
 local summon_after_travel = false  -- set true on travel so post-load we auto-gather
 local travel_arm_tick = 0          -- tick when we armed the post-travel summon
+
+-- Self no-collision toggle: optional per-player tool for clients who also install
+-- the mod. It affects only the local player's pawn; monster actors are never scanned
+-- or modified. Ctrl+N toggles it. Host tools remain host-gated separately.
+local SELF_NO_COLLISION_KEY_LABEL = "Ctrl+N"
 
 -- Dynamic spawn data (populated at runtime from actual PlayerStart objects)
 local level0_spawns = {}
@@ -1082,7 +1326,7 @@ end
 -- Collect every real, POSSESSED in-level character with a readable position.
 -- Possession (Controller present) is the gate that excludes lobby/CDO/spectator
 -- pawns. Garbage reads (Z==0 sentinel, unreadable) are dropped.
-local function collect_players()
+collect_players = function()
     local charclass = resolve_class("character")
     local chars = safe("CollectFind", function() return FindAllOf(charclass) end)
     local out = {}
@@ -1119,18 +1363,25 @@ end
 -- RegisterKeyBind + K2_SetActorLocationAndRotation (shipped SplitScreenMod).
 ---------------------------------------------------------------------------
 
--- Resolve the host pawn (local PlayerController's Pawn). Re-resolve every time
--- (pawns are recreated across travel/respawn — never cache).
-local function get_host_pawn()
+-- Resolve the local player's pawn. On the host this is the listen-server host pawn;
+-- on a client this is that client's own pawn. Re-resolve every time because pawns are
+-- recreated across travel/respawn.
+local function get_local_pawn()
     if not UEHelpers then return nil end
-    local pc = safe("HostPC", function() return UEHelpers.GetPlayerController() end)
+    local pc = safe("LocalPC", function() return UEHelpers.GetPlayerController() end)
     if not pc or not is_real_instance(pc) then return nil end
-    local pawn = safe("HostPawn", function()
+    local pawn = safe("LocalPawn", function()
         local p = pc.Pawn
         if p and p:IsValid() then return p end
         return nil
     end)
     return pawn
+end
+
+-- Resolve the host pawn (local PlayerController's Pawn). Re-resolve every time
+-- (pawns are recreated across travel/respawn — never cache).
+local function get_host_pawn()
+    return get_local_pawn()
 end
 
 -- Robust UObject identity. UE4SS wraps each access in a NEW Lua object, so the
@@ -1280,7 +1531,7 @@ end
 
 -- Detect the currently-loaded main level by matching a live GameMode instance
 -- against the per-level gamemode names. Returns the LEVEL_MAPS index or nil.
--- Lets Ctrl+H "step from where we actually are" rather than from a stale counter.
+-- Lets Ctrl+K/L "step from where we actually are" rather than from a stale counter.
 -- MUST stay parallel (same order) with LEVEL_MAPS above. Gamemode class names
 -- confirmed from BETGame.hpp / docs/research/level_structure.md.
 local LEVEL_GM_BY_INDEX = {
@@ -1407,7 +1658,7 @@ end
 -- STUCK ON THE LOADING SCREEN (skipped by the no-retry Allow loop — see
 -- bet_irisgate_diagnosis) a fresh chance to load in. It's the escape hatch for the
 -- "some players stuck loading after travel" case observed in the 7-player test.
--- Like Ctrl+H it carries all clients via seamless ProcessServerTravel; it also arms
+-- Like Ctrl+K/L it carries all clients via seamless ProcessServerTravel; it also arms
 -- the same post-travel auto-summon so the group re-gathers on reload.
 local function reload_current_level()
     if not require_host("Ctrl+J reload") then return end
@@ -1620,6 +1871,72 @@ local function ensure_board_keybind()
     end
 end
 
+local self_no_collision_enabled = false
+local self_no_collision_bound = false
+
+local function set_actor_collision_enabled(actor, enabled, label)
+    if not actor or not is_real_instance(actor) then return false end
+    local ok = safe((label or "Collision") .. "_SetActorEnableCollision", function()
+        if actor.SetActorEnableCollision then
+            actor:SetActorEnableCollision(enabled)
+            return true
+        end
+        if actor.K2_SetActorEnableCollision then
+            actor:K2_SetActorEnableCollision(enabled)
+            return true
+        end
+        return nil
+    end)
+    if ok then return true end
+    return safe((label or "Collision") .. "_prop", function()
+        actor.bActorEnableCollision = enabled
+        return true
+    end) and true or false
+end
+
+local function reapply_self_no_collision(reason)
+    if not self_no_collision_enabled then return end
+    local pawn = get_local_pawn()
+    if not pawn then return end
+    if set_actor_collision_enabled(pawn, false, "SelfNoCollisionReapply") then
+        safe("SelfNoCollisionFNU", function() pawn:ForceNetUpdate() return true end)
+        log("[NOCLIP] Self no-collision re-applied (" .. tostring(reason or "monitor") .. ")")
+    end
+end
+
+local function toggle_self_no_collision()
+    local pawn = get_local_pawn()
+    if not pawn then
+        log("[NOCLIP] Could not resolve local pawn — toggle ignored")
+        return
+    end
+    local target = not self_no_collision_enabled
+    if set_actor_collision_enabled(pawn, not target, "SelfNoCollision") then
+        self_no_collision_enabled = target
+        safe("SelfNoCollisionFNU", function() pawn:ForceNetUpdate() return true end)
+        log("[NOCLIP] " .. SELF_NO_COLLISION_KEY_LABEL .. ": self pawn collision " .. (target and "OFF" or "ON"))
+    else
+        log("[NOCLIP] " .. SELF_NO_COLLISION_KEY_LABEL .. ": SetActorEnableCollision unavailable on local pawn")
+    end
+end
+
+local function ensure_self_no_collision_keybind()
+    if self_no_collision_bound then return end
+    local ok = pcall(function()
+        RegisterKeyBind(Key.N, {ModifierKey.CONTROL}, function()
+            ExecuteInGameThread(function()
+                pcall(toggle_self_no_collision)
+            end)
+        end)
+    end)
+    if ok then
+        self_no_collision_bound = true
+        log("[NOCLIP] Optional local keybind registered: " .. SELF_NO_COLLISION_KEY_LABEL .. " = toggle self pawn collision")
+    else
+        log("[NOCLIP] RegisterKeyBind failed — self no-collision keybind unavailable")
+    end
+end
+
 -- HOST NOCLIP NUDGE (v2.14): snap the HOST pawn a small step to work around a spot
 -- where a 7+ player count can't progress (stuck geometry, an objective gated on
 -- fewer players, etc). Reuses the verified replicating teleport (bSweep=false,
@@ -1810,8 +2127,10 @@ local function run_monitor()
             ensure_objective_cap_hooks()
             cap_known_objective_requirements("level-detect")
             cap_generator_requirements("level-detect")
+            cap_curve_requirements("level-detect")
             cap_numeric_requirements("level-detect")
             cap_int_array_requirements("level-detect")
+            scale_supply_for_more_players("level-detect")
             cap_all_players_gates("level-detect")
             cap_s232_price("level-detect")
             cap_generic_scaled_objectives("level-detect")
@@ -1821,6 +2140,7 @@ local function run_monitor()
             ensure_probe_keybind()
             ensure_board_keybind()
             ensure_nudge_keybind()
+            ensure_self_no_collision_keybind()
         else
             return
         end
@@ -1875,12 +2195,17 @@ local function run_monitor()
     if ENABLE_OBJECTIVE_CAP then
         cap_known_objective_requirements("monitor")
         cap_generator_requirements("monitor")
+        cap_curve_requirements("monitor")
         cap_numeric_requirements("monitor")
         cap_int_array_requirements("monitor")
+        scale_supply_for_more_players("monitor")
         cap_all_players_gates("monitor")
         cap_s232_price("monitor")
         cap_generic_scaled_objectives("monitor")
     end
+
+    -- Keep optional client-side self no-collision across respawn/travel.
+    reapply_self_no_collision("monitor")
 
     -- Phase 5: Periodic diagnostics (every 30s = every 3rd tick).
     -- Cluster-RELATIVE classification: the old absolute -8150 threshold is
@@ -1921,5 +2246,6 @@ log("[RELOAD] Host keybind Ctrl+J (reload current level, un-stick loading) will 
 log("[PROBE] Host keybind Ctrl+O (read elevator gate, READ-ONLY probe/detect) will arm once in a real level")
 log("[BOARD] Host keybind Ctrl+P (teleport all players into elevator) will arm once in a real level")
 log("[NUDGE] Host keybinds Ctrl+Arrows (noclip move) / Ctrl+PageUp-Down (Z) will arm once in a real level")
+log("[NOCLIP] Optional local keybind " .. SELF_NO_COLLISION_KEY_LABEL .. " (toggle self pawn collision) will arm once in a real level if this mod is installed")
 log("[OBJCAP] Player-scaled requirements are capped at " .. OBJECTIVE_CAP .. " (generators " .. GENERATOR_CAP .. ", session cap remains " .. TARGET_CAP .. ")")
 log("[ADAPT] UEHelpers " .. (UEHelpers and "loaded" or "NOT FOUND — host-anchor disabled, will use cluster median"))

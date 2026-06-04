@@ -1,4 +1,4 @@
-BETPlayerCap v2.17.0 FULL WINDOWS PACKAGE
+BETPlayerCap v2.18.0 FULL WINDOWS PACKAGE
 =======================================
 [ English (this file) | 中文: README_INSTALL.zh-CN.txt ]
 
@@ -7,7 +7,7 @@ Download this package only from the project GitHub release page.
 WHAT THIS INSTALLS
 ------------------
 - UE4SS runtime/proxy files under the game's BET\Binaries\Win64 folder
-- BETPlayerCap v2.17.0 Lua mod
+- BETPlayerCap v2.18.0 Lua mod
 - UE4SS Keybinds + shared UEHelpers support files
 - Anti-lag Engine.ini in your user config folder
 - Backup data under BET\Binaries\Win64\.BETPlayerCapBackup
@@ -22,7 +22,9 @@ INSTALL
    Backrooms_Escape_Together folder. You can also run:
      install.bat "D:\SteamLibrary\steamapps\common\Backrooms_Escape_Together"
 4. Launch the game through Steam.
-5. Only the HOST needs the package. Friends/clients can join normally.
+5. Only the HOST needs the package for the player cap and host tools. Friends/clients
+   can join normally; they may optionally install it too if they want the local Ctrl+N
+   self no-collision toggle.
 
 To find the game folder in Steam:
   Steam > Library > Backrooms: Escape Together > Manage > Browse local files
@@ -35,11 +37,11 @@ internal scripts the .bat calls for you - do not run them directly.
 
 CHANGE THE PLAYER CAP (optional)
 --------------------------------
-Default lobby cap is 12. To change it, edit the top "USER CONFIG" block of:
+Default lobby cap is 16. To change it, edit the top "USER CONFIG" block of:
   <GameRoot>\BET\Binaries\Win64\ue4ss\Mods\BETPlayerCap\Scripts\main.lua
-Set  local TARGET_CAP = 12  to the number you want, save, and restart the game.
-Only 12 is tested. Higher values may hit the game's own session limits or worsen
-loading/voice lag - raise it in small steps and test.
+Set  local TARGET_CAP = 16  to the number you want, save, and restart the game.
+16 is the tested session-creation ceiling for this game build; 17+ can fail lobby
+creation at the EOS/session layer.
 
 UNINSTALL / RESTORE
 -------------------
@@ -56,12 +58,14 @@ Ctrl+O              Probe elevator (read-only diagnostics)
 Ctrl+P              Teleport all players into elevator
 Ctrl+Arrow keys     Noclip-nudge host (camera-relative forward/back/strafe)
 Ctrl+PageUp/Down    Noclip-nudge host on Z axis
+Ctrl+N              Optional local toggle: installed player's own pawn collision on/off
 
 NOTES / SAFETY
 --------------
 - Private lobbies with consenting players only.
 - This is unofficial and may break after game updates.
 - Noclip nudge ignores walls. Tap carefully near ledges or voids.
+- Ctrl+N is local-only for whoever installed the mod; it does not modify monsters or other players.
 - Ctrl+K/L can skip normal level/objective setup.
 - Voice problems with individual players not joining voice are a base-game/EOS RTC issue;
   this mod only suppresses the worst voice log flood, it does not fix EOS voice itself.

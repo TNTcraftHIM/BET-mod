@@ -4,7 +4,7 @@
 
 ## 测试目标
 
-BETPlayerCap v2.17.0 是针对 **Backrooms: Escape Together** 的 Steam Windows 版本构建并测试的，
+BETPlayerCap v2.18.0 是针对 **Backrooms: Escape Together** 的 Steam Windows 版本构建并测试的，
 使用了来自可正常工作的测试安装环境的 Unreal Engine **5.7.4** 与 UE4SS **3.0.1** 运行时
 文件/签名。
 
@@ -26,7 +26,7 @@ BETPlayerCap v2.17.0 是针对 **Backrooms: Escape Together** 的 Steam Windows 
 
 ## 多人/语音说明
 
-- 只有主机需要安装本模组。
+- 玩家上限和房主工具只需要主机/房主安装本模组；客户端如果想使用本地“自身无碰撞”开关，也可以选择安装。
 - 语音聊天使用的是基础游戏的 EOS RTC 系统。即使不使用本模组，也曾观察到一些
   特定玩家的语音故障。
 - 附带的 `Engine.ini` 仅抑制了一个嘈杂的语音合成欠载（underrun）日志类别；它

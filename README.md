@@ -5,12 +5,15 @@
 A Windows UE4SS mod package for **Backrooms: Escape Together** that lets a private
 lobby host play with more than the default 6 players (target cap: **16**) and adds
 host tools for the main 7+ player pain points: gathering separated players, reloading
-a stuck level, boarding elevators, capping player-scaled pass requirements at ≤10,
-disabling "all players" gates when the group exceeds 6, and nudging through geometry
-when a level was not built for that many bodies.
+a stuck level, boarding elevators, capping player-scaled pass requirements to their
+6-player baseline where the game exposes it, scaling confirmed supplies up for larger
+groups, disabling "all players" gates when the group exceeds 6, and nudging through
+geometry when a level was not built for that many bodies.
 
-> **Host-only install.** Only the lobby host/listen-server needs the mod. Friends can
-> join normally with an unmodified game.
+> **Host-only install for group-wide features.** Only the lobby host/listen-server needs
+> the mod for the player cap and host tools. Friends can join normally with an unmodified
+> game. If a non-host player also installs it, they can use the optional local-only
+> self no-collision toggle below.
 >
 > **Private/consenting lobbies only.** Do not use this for public matchmaking or to
 > disrupt other players.
@@ -20,13 +23,13 @@ when a level was not built for that many bodies.
 Use the full Windows package from the GitHub Releases page:
 
 ```text
-BETPlayerCap-v2.17.0-full.zip
+BETPlayerCap-v2.18.0-full.zip
 ```
 
 A local build may also produce the same file under `dist/` for maintainer use.
 
 Verify your download against the tracked checksum
-([`dist/BETPlayerCap-v2.17.0-full.zip.sha256`](dist/BETPlayerCap-v2.17.0-full.zip.sha256));
+([`dist/BETPlayerCap-v2.18.0-full.zip.sha256`](dist/BETPlayerCap-v2.18.0-full.zip.sha256));
 see [`RELEASES.md`](RELEASES.md).
 
 It includes the tested UE4SS runtime/proxy DLLs, BETPlayerCap, required Keybinds and
@@ -61,6 +64,7 @@ and restores backups where possible.
 | **Ctrl+P** | Teleport all players into the elevator |
 | **Ctrl+Arrow keys** | Noclip-nudge host: forward/back/strafe relative to where host looks |
 | **Ctrl+PageUp/PageDown** | Noclip-nudge host up/down on Z axis |
+| **Ctrl+N** | Optional local toggle for the installed player's own pawn collision |
 
 Notes:
 
@@ -68,6 +72,8 @@ Notes:
   floor" case. It is settling-gated and outlier-only.
 - Noclip nudge ignores collision and moves about 100 units per press. Tap carefully near
   ledges or voids.
+- Ctrl+N is local to the player who installed the mod: it toggles collision on that
+  player's pawn only. It does not alter monsters or other players.
 - Ctrl+K/L jump maps directly and can bypass normal objective/ending-path setup. They are
   convenience tools, not a faithful progression system.
 
@@ -79,8 +85,9 @@ Notes:
   to be base-game/EOS RTC/client-network issues, not BETPlayerCap. The included anti-lag
   config only suppresses the worst voice log flood; it does not fix EOS voice itself.
 - Some levels were not designed for 7+ players. The objective cap targets player-scaled
-  requirements (elevators, generators, puzzles) at ≤10 and disables "all players" gates
-  when the group exceeds 6, but geometry/loading issues can still require practical
+  requirements (elevators, generators, puzzles) using a 6-player baseline where the game
+  exposes one, scales confirmed supplies up for larger groups, and disables "all players"
+  gates when the group exceeds 6. Geometry/loading issues can still require practical
   workarounds. The elevator and noclip tools are not official level support.
 
 ## What the package installs

@@ -4,7 +4,7 @@
 
 ## Tested target
 
-The last known confirmed build is **v2.17.0** against the Steam Windows release of
+The last known confirmed build is **v2.18.0** against the Steam Windows release of
 **Backrooms: Escape Together** using Unreal Engine **5.7.x** and UE4SS **3.0.x**.
 The exact engine version, UE4SS runtime files, and signatures may change as the game
 updates — consult the changelog for the most recent tested configuration.
@@ -27,7 +27,8 @@ release.
 
 ## Multiplayer/voice notes
 
-- Only the host needs the mod.
+- Only the host needs the mod for the player cap and host tools; clients may optionally
+  install it too for the local-only self no-collision toggle.
 - Voice chat is the base game's EOS RTC system. Some player-specific voice failures have
   been observed even without this mod.
 - The included `Engine.ini` only suppresses a noisy voice-synth underrun log category; it

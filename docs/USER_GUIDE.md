@@ -4,7 +4,7 @@
 
 ## Supported package
 
-Current public package: **BETPlayerCap v2.17.0 full Windows package**.
+Current public package: **BETPlayerCap v2.18.0 full Windows package**.
 
 The full package includes UE4SS runtime files, so normal users do **not** need to install
 UE4SS or Python separately.
@@ -64,7 +64,9 @@ Backups are stored under:
 
 ## Keybinds
 
-See the root README for the current keybind table. All gameplay tools are host-only.
+See the root README for the current keybind table. Group-wide gameplay tools are
+host-only. The optional `Ctrl+N` self no-collision toggle only works for a player who
+also installed the mod locally, and affects only that player's pawn.
 
 ## Logs for bug reports
 

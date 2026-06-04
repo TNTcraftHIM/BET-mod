@@ -2,10 +2,13 @@
 
 Raises the player cap above the default 6 in **Backrooms: Escape Together**, and
 adds host-only tools to keep a 7+ player session working (gather, level switch,
-reload a stuck level, board the elevator for level transitions).
+reload a stuck level, board the elevator for level transitions). It also includes
+an optional local self no-collision toggle for players who install the mod on their
+own client.
 
-The mod runs **only on the host** (the listen-server authority). Clients do not
-need it installed — they just join the host's lobby.
+The mod runs **only on the host** for the player cap and host tools. Clients do not
+need it installed — they just join the host's lobby. A client may optionally install
+it to use the local-only `Ctrl+N` self no-collision toggle.
 
 ## What it does
 
@@ -15,9 +18,11 @@ need it installed — they just join the host's lobby.
   (an outlier far from the group), they are teleported to the group. Settling-gated
   so it never fires mid-elevator-descent, and outlier-only so it never rubber-bands
   someone who walks off on purpose.
-- **Player-scaled requirement caps:** Elevators requiring ≤6 players, generator counts
-  capped at ≤10, all player-count-driven objective amounts capped at ≤10 (via the game's
-  `bScalesWithPlayers` flag), and Level 232 sale-price discounts clamped to ≥50%.
+- **Player-scaled requirement/supply handling:** Elevators require at most 6 players;
+  generator and non-curve scalar requirements still use bounded caps; curve-backed
+  requirements such as `FuseBoard.PlayerCountFuseCurve` are capped to their runtime
+  6-player curve value; confirmed supply fields are multiplied upward for >6 players;
+  and Level 232 sale-price discounts are clamped to ≥100% (no player-count discount).
 - **"All players" gate disabler:** when more than 6 players are present, teleporters
   (`AInteractableTeleporter`) and level exits (`ALevelExitBase`) have their
   `bRequiresAllPlayers` flag forced to false — otherwise a group of 7–16 cannot fit on
@@ -35,12 +40,14 @@ need it installed — they just join the host's lobby.
 | **Ctrl+P** | Teleport all players into the elevator (for 7+ level transitions) |
 | **Ctrl+Arrows** | Noclip-nudge the host (camera-relative: ↑ forward, ↓ back, ←/→ strafe) |
 | **Ctrl+PageUp/Down** | Noclip-nudge the host up / down (Z axis) |
+| **Ctrl+N** | Optional local toggle: installed player's own pawn collision on/off |
 
 `Ctrl+K`/`Ctrl+L` jump straight to a map and bypass the lobby/ending-path, so level
 objectives may not initialize. `Ctrl+Arrows` / `Ctrl+PageUp/Down` move the host in
 small no-collision steps (~100u/press, camera-relative horizontally) — a recovery tool to
 get the host past a spot a 7+ player run can't pass normally. They ignore walls, so
-tap carefully near ledges. All of these are host-only.
+tap carefully near ledges. Host tools are host-only; `Ctrl+N` is local-only and affects
+only the installed player's pawn, not monsters or other players.
 
 ## Install
 

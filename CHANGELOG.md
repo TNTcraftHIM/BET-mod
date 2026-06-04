@@ -6,6 +6,38 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.18.0-dynamic-six-player-baseline (2026-06-04)
+
+### Stop using one universal "10" for everything; add supply scaling for larger groups
+
+Follow-up audit conclusion: `GENERIC_OBJECTIVE_CAP=10` was a practical placeholder,
+not a verified 6-player value for every objective. The dump exposes fields and curve
+pointers, but not Blueprint defaults or `UCurveFloat` key data, so exact authored
+6-player values require runtime reads. v2.18 switches the parts that *can* be read at
+runtime to dynamic baselines and keeps static caps only where no curve/value source is
+available yet.
+
+- **Curve-backed requirements now use the actual 6-player curve value** where available.
+  `FuseBoard.RequiredFuseAmount` is capped to `FuseBoard.PlayerCountFuseCurve:GetFloatValue(6)`,
+  rounded up, instead of blindly using 10. If the curve cannot be read, it falls back to
+  `GENERIC_OBJECTIVE_CAP=10` and logs through the normal `[OBJCAP]` path.
+- **Supply/resource fields now scale UP for >6 players** instead of being capped down.
+  When possessed players > `SUPPLY_BASE_PLAYERS=6`, confirmed supply fields are multiplied
+  by `players / 6` from their first observed runtime value (so the 10s monitor cannot
+  repeatedly multiply them):
+  - Level 1 `NumberOfAlmondWater`
+  - Level 3 lootbox wire/tape counts (`SingleFuseLootbox*`, `MultiFuseLootbox*`)
+  - Level 232 `ItemSpawnRates.PickupSpawnRange` / `GrabbableSpawnRange`
+- **Still NOT supply-scaled by default:** monster difficulty fields and Level 3
+  `PlayerCountToRepairItemMultiplier`/`RepairItemMultiplier`/spawn chances. Those may already
+  be player-count-aware or are difficulty knobs; changing them needs live values first.
+- **Optional local self no-collision toggle:** `Ctrl+N` toggles collision on the
+  installed player's own pawn. This is intentionally local-only for clients who choose
+  to install the mod too; it does not scan or modify monster actors or other players.
+- **Keybind sanity check:** current active shortcuts are `Ctrl+G` gather, `Ctrl+J` reload,
+  `Ctrl+K/L` previous/next level, `Ctrl+O` probe, `Ctrl+P` board elevator,
+  `Ctrl+Arrows`/`Ctrl+PageUp/PageDown` host nudge, and `Ctrl+N` self no-collision.
+
 ## v2.17.1-requirement-audit (2026-06-04)
 
 ### Tighten the requirement-vs-supply split after a full dump re-audit

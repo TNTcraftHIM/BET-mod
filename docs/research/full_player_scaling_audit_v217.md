@@ -1,8 +1,9 @@
-# Full Player-Scaling Audit (v2.17)
+# Full Player-Scaling Audit (v2.18)
 
 > Line-by-line read of every `LevelNChunkManager` / `GameState` / `GameMode` /
 > progression actor in `BETGame.hpp` (2026-06-02 dump, UE 5.7 MSVC shipping build).
-> This is the data that drives the per-class caps and gate-disables in main.lua v2.17+.
+> This is the data that drives the per-class caps, curve-backed baselines,
+> supply scaling, and gate-disables in main.lua v2.18+.
 
 ---
 
@@ -27,14 +28,26 @@
 
 ---
 
-## Numeric requirement caps — cap per-class fields at GENERIC_OBJECTIVE_CAP (10)
+## Curve-backed requirement caps — use the authored 6-player runtime value
 
-These are player-count-scaled numeric requirements, not spawn counts or progress trackers:
+These are player-count-scaled requirements where the dump exposes the curve object, so
+the mod can read the actual 6-player baseline at runtime instead of assuming `10`.
 
 | Class | Field | Cap | Notes |
 |-------|-------|-----|-------|
-| `FuseBoard` | `RequiredFuseAmount` | 10 | Level 3 fuse puzzle — scales via `PlayerCountFuseCurve`. |
-| `RepairableElectricalBox` | `RequiredFuseAmount` | 10 | Same as above, another repairable box type. |
+| `FuseBoard` | `RequiredFuseAmount` | `PlayerCountFuseCurve:GetFloatValue(6)` (rounded up; fallback 10 if unreadable) | Level 3 fuse puzzle. |
+
+**Action:** use `cap_curve_requirements()` / per-instance `GetFloatValue(6)` for these fields.
+
+## Static numeric requirement caps — fallback at GENERIC_OBJECTIVE_CAP (10)
+
+These are player-count-scaled numeric requirements, not spawn counts or progress trackers.
+The static dump does not expose a per-field 6-player baseline for them, so `10` remains a
+bounded fallback until live logging measures the exact authored values:
+
+| Class | Field | Cap | Notes |
+|-------|-------|-----|-------|
+| `RepairableElectricalBox` | `RequiredFuseAmount` | 10 | Repair box requirement with no curve property exposed in the dump. |
 | `CoinGate` | `CoinsRequired` | 10 | Coins needed to open the gate. |
 | `InteractableDoor` | `ItemAmountRequired` | 10 | Door that requires a certain number of items placed on it. |
 | `LevelFunExitDoor` | `RequiredTicketMilestone` | 10 | FUN level exit door — ticket count threshold. |
@@ -68,17 +81,21 @@ These are player-count-scaled numeric requirements, not spawn counts or progress
 
 ---
 
-## Confirmed FIXED (not player-scaled) — do NOT cap these
+## Fixed supply/spawn fields — do NOT cap down as requirements
+
+These fields are fixed or supply-oriented rather than pass requirements. For >6 players,
+confirmed supply fields are scaled upward from their first observed runtime value; monster
+and hazard fields remain untouched unless live testing proves a separate need.
 
 ### Level 1 (`Level1ChunkManager`)
-- `MaxSkinStealers` — fixed int, does not grow with players.
-- `NumberOfAlmondWater` — fixed int, does not grow.
+- `MaxSkinStealers` — fixed monster count; left unchanged.
+- `NumberOfAlmondWater` — fixed supply count; **scaled up by `players / 6` for >6 players**.
 - `NumberOfGenerators` — covered separately by GENERATOR_CAP = 10 (fixed value, not per-player; the cap is just a safety net if the game initializes it above 10).
-- `NumberOfPuddles` — fixed int.
+- `NumberOfPuddles` — fixed hazard count; left unchanged.
 
-### Level 232 (`Level232GameState`)
-- `ItemSpawnRates` — `FIntPoint` min/max ranges for item spawn counts. Fixed per-chunk, no player-count field. (These are *supply* levels; more players = less per-player supply, but the absolute count doesn't increase.)
-- `FacelingSpawnChunkInterval`, `FacelingMarkerTargetCountPerChunk` — fixed ints.
+### Level 232 (`Level232GameState` / `Level232ChunkManager`)
+- `ItemSpawnRates` — `FIntPoint` min/max ranges for item spawn counts. Fixed per-chunk supply ranges; **scaled up by `players / 6` for >6 players**.
+- `FacelingSpawnChunkInterval`, `FacelingMarkerTargetCountPerChunk` — fixed monster-spawn fields; left unchanged.
 
 ### Level 4 (`Level4GameState`)
 - `FacelingSpawnRateMultiplier` — fixed float.
@@ -97,15 +114,17 @@ These are player-count-scaled numeric requirements, not spawn counts or progress
 
 ---
 
-## Summary of all caps applied by v2.17+ mod logic
+## Summary of all caps/scales applied by v2.18+ mod logic
 
-| What | Cap value | Method |
-|------|-----------|--------|
+| What | Cap / scale value | Method |
+|------|-------------------|--------|
 | Lobby/session player cap (`TARGET_CAP`) | 16 (EOS hard limit) | Widget override + post-hooks on InitializeSelection/ClampMaxPlayers/IncreaseMaxPlayers |
 | Elevator presence gate (`Elevator_Base.PlayersNeededToStartElevator`) | ≤6 | `cap_props_on_classes()` per-class scan + hooks |
 | Generator count (`Level1ChunkManager.NumberOfGenerators`) | ≤10 | Same pattern |
-| Generic player-scaled objectives (`FLevelObjective.ObjectiveAmount` where `bScalesWithPlayers=true`) | ≤10 | Array scan across all GameStates |
-| Numeric requirement fields (FuseBoard, CoinGate, InteractableDoor, etc.) | ≤10 | Per-class property cap |
-| Level 232 sale-price discount (`ScaledPricePercent`) | ≥1.00 | Per-instance clamp on `Level232GameState` (strict no-discount policy) |
+| Fuse board requirement (`FuseBoard.RequiredFuseAmount`) | ≤ `PlayerCountFuseCurve:GetFloatValue(6)` | Per-instance runtime curve read; fallback ≤10 if curve read fails |
+| Generic player-scaled objectives (`FLevelObjective.ObjectiveAmount` where `bScalesWithPlayers=true`) | ≤10 until a per-objective baseline is measured | Array scan across all GameStates |
+| Numeric requirement fields (CoinGate, InteractableDoor, FUN ticket doors, etc.) | ≤10 until per-field live baselines are measured | Per-class property cap |
 | Level FUN warehouse coin requirements (`WarehouseRequiredCoinsTotals[]`) | ≤10 per element | Int-array scan + `AddWarehouseRequiredCoins` hook |
+| Level 232 sale-price discount (`ScaledPricePercent`) | ≥1.00 | Per-instance clamp on `Level232GameState` (strict no-discount policy) |
 | "All players present" gates (`bRequiresAllPlayers` on teleporters/level exits) | false when >6 possessed | Instance scan + `OnSurvivorOverlap`/`OnAllPlayersPresent`/teleporter hooks |
+| Confirmed supply fields (Level 1 almond water, Level 3 lootbox wire/tape counts, Level 232 item spawn ranges) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base to avoid repeated multiplication |
