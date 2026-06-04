@@ -464,6 +464,7 @@ local SUPPLY_SCALE_CLASSES = {
     "Level1ChunkManagerDebug",
     "Level3ChunkManager",            -- repair supplies / lootbox contents
     "Level232ChunkManager",          -- ItemSpawnRates FIntPoint ranges (handled specially)
+    "LevelNeg1ChunkManager",         -- LootSpawnRatio (loot density)
 }
 local SUPPLY_SCALE_PROPS = {
     NumberOfAlmondWater = true,
@@ -471,6 +472,8 @@ local SUPPLY_SCALE_PROPS = {
     SingleFuseLootboxTapeSpawnCount = true,
     MultiFuseLootboxWireSpawnCount = true,
     MultiFuseLootboxTapeSpawnCount = true,
+    RepairItemMultiplier = true,       -- Level 3: multiplier for repair item spawns (supply)
+    LootSpawnRatio = true,            -- Level Neg1: loot density ratio (supply)
 }
 
 -- Curve-backed requirement fields where the authored curve can tell us the 6-player cap.
@@ -715,6 +718,35 @@ local function scale_supply_for_more_players(reason)
     return total
 end
 
+-- Level 6: ALevel6PuzzleManager has bScaleWithPlayers=true, which makes the
+-- museum puzzle harder (more buttons / harder sequence) with more players.
+-- Force it false so the puzzle stays at ≤6-player difficulty.
+local l6_scale_logged = false
+local function cap_level6_puzzle_scale(reason)
+    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local list = safe("L6Puzzle", function() return FindAllOf("ALevel6PuzzleManager") end)
+    if not list then return 0 end
+    local total = 0
+    for _, obj in pairs(list) do
+        if is_real_instance(obj) then
+            local v = safe("L6Scale", function() return obj.bScaleWithPlayers end)
+            if v == true then
+                safe("L6ScaleW", function() obj.bScaleWithPlayers = false return true end)
+                local nb = safe("L6Buttons", function() return obj.NumButtons end)
+                log(string.format("[OBJCAP] ALevel6PuzzleManager.bScaleWithPlayers = true -> false (NumButtons=%s %s)",
+                    tostring(nb), reason or "monitor"))
+                total = total + 1
+            elseif not l6_scale_logged then
+                local nb = safe("L6Buttons2", function() return obj.NumButtons end)
+                log(string.format("[OBJCAP] ALevel6PuzzleManager.bScaleWithPlayers=%s NumButtons=%s (%s)",
+                    tostring(v), tostring(nb), reason or "monitor"))
+                l6_scale_logged = true
+            end
+        end
+    end
+    return total
+end
+
 local function cap_known_objective_requirements(reason)
     return cap_props_on_classes(ELEVATOR_CLASSES, ELEVATOR_PROPS, reason)
 end
@@ -831,22 +863,65 @@ end
 
 -- Level 232: ScaledPricePercent is NOT modified. We cannot prove the authored
 -- 6-player value or direction from the dump, and the user confirmed that changing
--- it risks making things harder instead of easier. Instead, Level 232 gets more
--- items to sell via the ItemSpawnRates supply scaling (more items = more money).
--- This function only logs the current value for diagnostics.
+-- it risks making things harder instead of easier. Instead, Level 232 gets easier via:
+--  (a) ItemSpawnRates supply scaling (more items to sell = more money)
+--  (b) CheckoutLane.CouponMultiplier scaled up (coupons give better sell prices)
+-- This function also logs diagnostics for the full price chain.
 local s232_price_logged = false
 local function cap_s232_price(reason)
     if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local players = effective_player_count()
     for _, class_name in ipairs(S232_PRICE_CLASSES) do
         local list = safe("S232F_" .. class_name, function() return FindAllOf(class_name) end)
         if list then
             for _, obj in pairs(list) do
                 if is_real_instance(obj) then
-                    local v = safe("S232R_" .. class_name, function() return obj.ScaledPricePercent end)
-                    if type(v) == "number" and not s232_price_logged then
-                        log(string.format("[S232] %s.ScaledPricePercent = %.4f (read-only, not modified; %s)",
-                            class_name, v, reason or "monitor"))
+                    if not s232_price_logged then
+                        local sp = safe("S232R_SP", function() return obj.ScaledPricePercent end)
+                        local rq = safe("S232R_RQ", function() return obj.RequiredQuota end)
+                        local cq = safe("S232R_CQ", function() return obj.CurrentQuota end)
+                        local maxp = safe("S232R_MXP", function() return obj.MaxNumberOfItemsForPurchase end)
+                        local cold = safe("S232R_CLD", function() return obj.ColdItemMultiplier end)
+                        log(string.format("[S232] diagnostics (%s): ScaledPricePercent=%.4f RequiredQuota=%.0f CurrentQuota=%.0f MaxPurchaseItems=%s ColdMult=%s players=%d",
+                            reason or "monitor", sp or -1, rq or -1, cq or -1, tostring(maxp), tostring(cold), players))
                         s232_price_logged = true
+                    end
+                end
+            end
+        end
+    end
+    -- Scale up CheckoutLane CouponMultiplier for >6 players.
+    -- Higher coupon = better sell prices = easier to meet quota.
+    if players > SUPPLY_BASE_PLAYERS then
+        local factor = players / SUPPLY_BASE_PLAYERS
+        local lanes = safe("S232Lanes", function() return FindAllOf("AALevel232CheckoutLane") end)
+        if lanes then
+            for _, lane in pairs(lanes) do
+                if is_real_instance(lane) then
+                    local cm = safe("S232Coupon", function() return lane.CouponMultiplier end)
+                    if type(cm) == "number" and cm > 0 then
+                        local key = supply_original_key(lane, "CouponMultiplier")
+                        local base = supply_scaled_original[key] or cm
+                        supply_scaled_original[key] = base
+                        local target = ceil_int(base * factor * 100) / 100
+                        if target > cm then
+                            safe("S232CouponW", function() lane.CouponMultiplier = target return true end)
+                            log(string.format("[S232] CheckoutLane.CouponMultiplier %.2f -> %.2f (base=%.2f factor=%.2f %s)",
+                                cm, target, base, factor, object_label(lane)))
+                        end
+                    end
+                    -- Also scale LaneMultiplier (per-lane base price multiplier)
+                    local lm = safe("S232Lane", function() return lane.LaneMultiplier end)
+                    if type(lm) == "number" and lm > 0 then
+                        local key = supply_original_key(lane, "LaneMultiplier")
+                        local base = supply_scaled_original[key] or lm
+                        supply_scaled_original[key] = base
+                        local target = ceil_int(base * factor * 100) / 100
+                        if target > lm then
+                            safe("S232LaneW", function() lane.LaneMultiplier = target return true end)
+                            log(string.format("[S232] CheckoutLane.LaneMultiplier %.2f -> %.2f (base=%.2f factor=%.2f %s)",
+                                lm, target, base, factor, object_label(lane)))
+                        end
                     end
                 end
             end
@@ -1125,6 +1200,7 @@ ExecuteInGameThread(function()
     pcall(cap_known_objective_requirements, "startup")
     pcall(cap_generator_requirements, "startup")
     pcall(cap_curve_requirements, "startup")
+    pcall(cap_level6_puzzle_scale, "startup")
     pcall(cap_numeric_requirements, "startup")
     pcall(cap_int_array_requirements, "startup")
     pcall(scale_supply_for_more_players, "startup")
@@ -2130,6 +2206,7 @@ local function run_monitor()
             cap_known_objective_requirements("level-detect")
             cap_generator_requirements("level-detect")
             cap_curve_requirements("level-detect")
+            cap_level6_puzzle_scale("level-detect")
             cap_numeric_requirements("level-detect")
             cap_int_array_requirements("level-detect")
             scale_supply_for_more_players("level-detect")
@@ -2198,6 +2275,7 @@ local function run_monitor()
         cap_known_objective_requirements("monitor")
         cap_generator_requirements("monitor")
         cap_curve_requirements("monitor")
+        cap_level6_puzzle_scale("monitor")
         cap_numeric_requirements("monitor")
         cap_int_array_requirements("monitor")
         scale_supply_for_more_players("monitor")
