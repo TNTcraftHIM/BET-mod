@@ -6,6 +6,24 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.5 (2026-06-07)
+
+- **Fix (audit follow-up): supply scaling could compound on a re-detect.** v2.19.4's
+  `reset_per_level_state()` cleared `supply_scaled_original` (the per-object
+  first-observed base map). If a re-detect fired while the supply objects still
+  held an already-scaled value, the next pass re-captured that scaled value as the
+  new base and scaled it again — compounding toward factor² (e.g. 1.33× → 1.77×).
+  The reset no longer clears that map; the first-observed base is preserved across
+  re-detects, keeping supply scaling idempotent. The log-dedup maps
+  (`objective_cap_changed`, `s232_price_logged`, `l6_scale_logged`) are still
+  cleared so a re-detected level re-logs its caps. No change to the second-run
+  cap-reapply fix from v2.19.4. Found by a full adversarial code+docs audit.
+- **Docs/comments:** corrected the `S232_PRICE_CLASSES` comment (it scales prices
+  *up* for >6, not "prevents too cheap"); fixed the `game_mechanics_reference.md`
+  action inventory (ScaledPricePercent is actively scaled, not read-only; added the
+  `LaneMultiplier` / `CouponMultiplier` rows); noted that `S232_PRICE_FLOOR` was
+  superseded in v2.19.3 in the historical v2.17.0 entry.
+
 ## v2.19.4 (2026-06-07)
 
 - **Fix: caps now re-apply on a second playthrough.** `level_detected` previously
@@ -199,6 +217,9 @@ Design principle: **same difficulty as ≤6 players, just with up to 16 people.*
 - **Level 232 `ScaledPricePercent`**: the game's player-scaled discount makes items
   too cheap to sell (user-confirmed at >6). Clamped to a configurable floor
   (`S232_PRICE_FLOOR = 0.50`, i.e. 50% minimum price).
+  *(Superseded in v2.19.3: the `S232_PRICE_FLOOR` clamp was removed in favor of
+  scaling `ScaledPricePercent` / `LaneMultiplier` / `CouponMultiplier` upward from
+  their first-observed runtime value. The constant no longer exists in current code.)*
 - **Extended objective-requirement caps**: based on a full class-dump audit of every
   level manager / GameState / progression actor in BETGame.hpp:
   - `FuseBoard.RequiredFuseAmount ≤ 10`

@@ -212,7 +212,7 @@ No ChunkManager or GameState with player-scaled fields identified.
 | Field | Type | Offset | Category | Our action |
 |-------|------|--------|----------|------------|
 | `RequiredQuota` | `float` | 0x05D0 | **Target amount** | — (read-only) |
-| `ScaledPricePercent` | `float` | 0x05D4 | Global sell-price percentage multiplier | Scale up for >6 since v2.19.4; no-op at ≤6 |
+| `ScaledPricePercent` | `float` | 0x05D4 | Global sell-price percentage multiplier | Scale up for >6 since v2.19.5; no-op at ≤6 |
 | `SaleCatalog` | `TSoftObjectPtr<UBETStoreCatalog>` | 0x05F8 | Items players can sell | — |
 | `PurchaseCatalog` | `TSoftObjectPtr<UBETStoreCatalog>` | 0x0620 | Items players can buy | — |
 | `ItemsForSale` | `FLevel232ShopItemArray` | 0x0658 | Current sellable items | — |
@@ -323,7 +323,7 @@ SellPrice = BasePrice
           × ScaledPricePercent     (GameState global — player-count-related?)
 ```
 
-**Key insight:** There are **multiple multipliers** in the chain. `ScaledPricePercent` is the global earned-percentage multiplier (confirmed by BET 0.14.6 patch notes), while `LaneMultiplier` and `CouponMultiplier` are per-lane links. v2.19.4 scales all three upward for >6 players from first observed runtime values.
+**Key insight:** There are **multiple multipliers** in the chain. `ScaledPricePercent` is the global earned-percentage multiplier (confirmed by BET 0.14.6 patch notes), while `LaneMultiplier` and `CouponMultiplier` are per-lane links. v2.19.5 scales all three upward for >6 players from first observed runtime values.
 
 ---
 
@@ -479,7 +479,7 @@ No player-scaled fields identified.
 
 ---
 
-## Inventory of All Mod Actions (v2.19.4)
+## Inventory of All Mod Actions (v2.19.5)
 
 | Target | Action | Trigger |
 |--------|--------|---------|
@@ -496,7 +496,9 @@ No player-scaled fields identified.
 | `LevelFUNChunkManager.WarehouseRequiredCoinsTotals[]` | Cap each element at ≤10 | Int-array scan + hook |
 | `FLevelObjective.ObjectiveAmount` (where `bScalesWithPlayers=true`) | Cap at ≤10 | GameState array scan |
 | `bRequiresAllPlayers` on teleporters/exits | Force false when >6 players | Scan + hooks |
-| `Level232GameState.ScaledPricePercent` | Read-only diagnostic | Log once |
+| `Level232GameState.ScaledPricePercent` | Scale up by `players/6` when >6 (no-op at ≤6) | Startup + monitor + supply-scale hook |
+| `AALevel232CheckoutLane.LaneMultiplier` | Scale up by `players/6` when >6 (no-op at ≤6) | Startup + monitor + supply-scale hook |
+| `AALevel232CheckoutLane.CouponMultiplier` | Scale up by `players/6` when >6 (no-op at ≤6) | Startup + monitor + supply-scale hook |
 | `Level1ChunkManager.NumberOfAlmondWater` | Scale up by `players/6` | Supply scan |
 | `Level3ChunkManager` lootbox wire/tape counts | Scale up by `players/6` | Supply scan |
 | `Level232ChunkManager.ItemSpawnRates` ranges | Scale up by `players/6` | Supply scan |

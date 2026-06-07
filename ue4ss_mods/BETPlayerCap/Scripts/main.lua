@@ -23,7 +23,7 @@ local ALL_PLAYERS_GATE_CAP = 6
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
 -- ======================================================================
-local VERSION = "2.19.4-second-run-recap"
+local VERSION = "2.19.5-supply-base-fix"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -405,7 +405,9 @@ local ALL_PLAYERS_GATE_PROPS = {
     bRequiresAllPlayers = false,  -- cap_requirement_prop sets bools to target when true
 }
 
--- == Level 232: prevent the player-scaled price discount from making items too cheap ==
+-- == Level 232: scale the player-scaled sell-price metrics UP for >6 players ==
+-- (no-op at <=6). Improves the global ScaledPricePercent on the GameState here;
+-- the per-lane LaneMultiplier / CouponMultiplier are scaled in cap_s232_price.
 local S232_PRICE_CLASSES = {
     "Level232GameState",
 }
@@ -1222,17 +1224,24 @@ local function current_world_name()
     end)
 end
 
--- Re-arm all per-level state so the next monitor tick re-detects the level and
--- re-runs the full immediate cap/scale pass. Also clears the per-level dedup/base
--- maps so bases are re-captured from the CURRENT level's authored values instead
--- of carrying a stale base keyed by a re-used object name. Safe: this only ever
--- forces caps/scales to be re-applied; it never removes a cap.
+-- Re-arm per-level state so the next monitor tick re-detects the level and
+-- re-runs the full immediate cap/scale pass. Clears only the per-level *log-dedup*
+-- maps (so a re-detected level re-logs its caps) and the spawn/settle state.
+--
+-- IMPORTANT: does NOT clear `supply_scaled_original`. That table holds the
+-- FIRST-OBSERVED runtime value per object (keyed by full object path) and is the
+-- anchor that keeps supply scaling idempotent — `scale_supply_number` always
+-- scales `base * factor`, never the already-scaled value. Wiping it here would
+-- let a re-detect re-capture an already-scaled value as the new base and compound
+-- the multiplier (factor² ...). Stale entries for unloaded objects are harmless:
+-- new objects get new paths, and if an object genuinely persists across a reset
+-- its true first-observed base is exactly what we want to keep.
+-- Safe: this only ever forces caps/scales to be re-applied; it never removes a cap.
 local function reset_per_level_state(reason)
     spawn_fix_applied = false
     level_detected = false
     last_median_z = nil
     settled_reads = 0
-    supply_scaled_original = {}
     objective_cap_changed = {}
     objective_cap_hook_fired = {}
     s232_price_logged = false
