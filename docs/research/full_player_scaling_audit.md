@@ -1,9 +1,9 @@
-# Full Player-Scaling Audit (v2.19.1)
+# Full Player-Scaling Audit (v2.19.3)
 
 > Line-by-line read of every `LevelNChunkManager` / `GameState` / `GameMode` /
 > progression actor in `BETGame.hpp` (2026-06-02 dump, UE 5.7 MSVC shipping build).
 > This is the data that drives the per-class caps, curve-backed baselines,
-> supply scaling, and gate-disables in main.lua v2.19.1+.
+> supply scaling, and gate-disables in main.lua v2.19.3+.
 
 ---
 
@@ -18,13 +18,14 @@
 
 ---
 
-## Level 232 — ScaledPricePercent (read-only)
+## Level 232 — sell-price multipliers (scale up for >6)
 
 | Class | Field | Type | Notes |
 |-------|-------|------|-------|
-| `Level232GameState` | `ScaledPricePercent` (float) | float | Item sell-price multiplier ("coupon"). Direction and 6-player baseline unknown from dump. |
+| `Level232GameState` | `ScaledPricePercent` (float) | float | Global sell-price percentage. BET 0.14.6 patch notes confirm this is an earned-income percentage mechanic. |
+| `AALevel232CheckoutLane` | `LaneMultiplier` / `CouponMultiplier` | float | Per-lane sell-price multipliers; coupon applies when active on the lane. |
 
-**Action:** NOT modified. The dump cannot prove the authored 6-player value or direction. Level 232 instead gets easier via `ItemSpawnRates` supply scaling (more items to sell = more money). The function logs the current value once for diagnostics. May be revisited after live ≥7-player observation.
+**Action:** for >6 possessed players, scale `ScaledPricePercent`, `LaneMultiplier`, and `CouponMultiplier` upward from first observed runtime values. This is a no-op at ≤6. `ItemSpawnRates` supply scaling remains active too. Live ≥7-player testing should still confirm the new 0.14.6 runtime values and whether `RequiredQuota` changed.
 
 ---
 
@@ -77,7 +78,7 @@ bounded fallback until live logging measures the exact authored values:
 | `ALevel3ChunkManager` | `PlayerCountToWireCurve`, `PlayerCountToRepairItemMultiplier` | UCurveFloat + multiplier name | Level 3 wire/repair-item spawn scaling. Covered by the generic `CurrentObjectives` path if these feed into it; otherwise needs explicit cap. |
 | `AFuseBoard` | `PlayerCountFuseCurve` (UCurveFloat) → `RequiredFuseAmount` | Curve indexed by player count, then written to RequiredFuseAmount | The cap on RequiredFuseAmount above covers the result of this curve. |
 | `ALevelNeg1Manager` | `EntitySpawnChancePerPlayer` + `MaxShadowSpawnAmount` | Per-player float with fixed ceiling | Shadow spawn rate scales but is bounded by MaxShadowSpawnAmount (fixed). Not a blocking gate, just harder at >6. **Not capped** — this is monster difficulty, not an objective requirement. |
-| `Level232GameState` | `ScaledPricePercent` | Scaled by player count | Not modified; logged once for diagnostics. May revisit after live testing. |
+| `Level232GameState` | `ScaledPricePercent` | Scaled by player count | Scaled up for >6 since v2.19.3; 0.14.6 patch notes confirm this is income percentage scaling. |
 
 ---
 
@@ -95,6 +96,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 
 ### Level 232 (`Level232GameState` / `Level232ChunkManager`)
 - `ItemSpawnRates` — `FIntPoint` min/max ranges for item spawn counts. Fixed per-chunk supply ranges; **scaled up by `players / 6` for >6 players**.
+- `ScaledPricePercent`, `LaneMultiplier`, `CouponMultiplier` — sell-price multipliers; **scaled up by `players / 6` for >6 players** from first observed runtime values.
 - `FacelingSpawnChunkInterval`, `FacelingMarkerTargetCountPerChunk` — fixed monster-spawn fields; left unchanged.
 
 ### Level 4 (`Level4GameState`)
@@ -114,7 +116,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 
 ---
 
-## Summary of all caps/scales applied by v2.19.1+ mod logic
+## Summary of all caps/scales applied by v2.19.3+ mod logic
 
 | What | Cap / scale value | Method |
 |------|-------------------|--------|
@@ -125,7 +127,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 | Generic player-scaled objectives (`FLevelObjective.ObjectiveAmount` where `bScalesWithPlayers=true`) | ≤10 until a per-objective baseline is measured | Array scan across all GameStates |
 | Numeric requirement fields (CoinGate, InteractableDoor, FUN ticket doors, etc.) | ≤10 until per-field live baselines are measured | Per-class property cap |
 | Level FUN warehouse coin requirements (`WarehouseRequiredCoinsTotals[]`) | ≤10 per element | Int-array scan + `AddWarehouseRequiredCoins` hook |
-| Level 232 sell-price multiplier (`ScaledPricePercent`) | not modified (read-only diagnostics) | Logs current value once; ItemSpawnRates supply scaling handles the difficulty instead |
+| Level 232 sell-price multipliers (`ScaledPricePercent`, `LaneMultiplier`, `CouponMultiplier`) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base; no-op at ≤6 |
 | "All players present" gates (`bRequiresAllPlayers` on teleporters/level exits) | false when >6 possessed | Instance scan + `OnSurvivorOverlap`/`OnAllPlayersPresent`/teleporter hooks |
-| Level 6 puzzle difficulty (`ALevel6PuzzleManager.bScaleWithPlayers`) | `false` when >6 possessed (no-op at ≤6; v2.19.1 guard) | Instance scan with `effective_player_count() > ALL_PLAYERS_GATE_CAP` guard |
-| Confirmed supply fields (Level 1 almond water, Level 3 lootbox wire/tape counts, Level 232 item spawn ranges) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base to avoid repeated multiplication |
+| Level 6 puzzle difficulty (`ALevel6PuzzleManager.bScaleWithPlayers`) | `false` when >6 possessed (no-op at ≤6; v2.19.3 guard) | Instance scan with `effective_player_count() > ALL_PLAYERS_GATE_CAP` guard |
+| Confirmed supply fields (Level 1 almond water, Level 3 lootbox wire/tape counts, Level 232 item spawn ranges, Level 232 sell-price multipliers) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base to avoid repeated multiplication |

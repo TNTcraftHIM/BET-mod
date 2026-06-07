@@ -22,14 +22,8 @@ local ALL_PLAYERS_GATE_CAP = 6
 --   increases resource/supply counts; it never caps them down.
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
--- S232_PRICE_FLOOR: Level 232 "ScaledPricePercent" (item sell-price multiplier).
---   NOT MODIFIED — the dump cannot prove the authored 6-player value or direction,
---   and touching it risks making things harder. Level 232 instead gets easier via
---   ItemSpawnRates supply scaling (more items to sell = more money). The function
---   logs the current value once for diagnostics.
-local S232_PRICE_FLOOR = nil  -- disabled: ScaledPricePercent is not modified
 -- ======================================================================
-local VERSION = "2.19.1-comprehensive-scaling"
+local VERSION = "2.19.3-summon-money-hotfix"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -248,8 +242,6 @@ log("v" .. VERSION .. " loaded - target cap: " .. TARGET_CAP .. ", objective cap
 local CLASS_NAMES = {
     widget = {"BETMultiplayerSettingsWidget"},
     gamemode = {"BP_Level0GameMode_C", "BETGameMode", "GameModeBase"},
-    character = {"BP_Survivor_Character_C", "SurvivorCharacter", "Character"},
-    playerstart = {"BETPlayerStart", "PlayerStart"},
 }
 
 local resolved_classes = {}
@@ -417,9 +409,6 @@ local ALL_PLAYERS_GATE_PROPS = {
 local S232_PRICE_CLASSES = {
     "Level232GameState",
 }
-local S232_PRICE_PROPS = {
-    ScaledPricePercent = true,  -- scale up for >6 players like other supplies
-}
 
 -- == Generator count (Level 1) ==
 local GENERATOR_CAP_CLASSES = {
@@ -489,16 +478,6 @@ local CURVE_REQUIREMENT_SPECS = {
     },
 }
 
--- Level 3 wire requirement is ambiguous in the dump: sector counts are likely required
--- repair wires, while repair-item multipliers / lootbox counts are supply. Keep the
--- requirement cap diagnostic/off until live testing confirms these fields are targets.
-local ENABLE_LEVEL3_WIRE_REQUIREMENT_CAP = false
-local LEVEL3_WIRE_REQUIREMENT_CAP_PROPS = {
-    Sector1WallWireRepairCount = GENERIC_OBJECTIVE_CAP,
-    Sector2WallWireRepairCount = GENERIC_OBJECTIVE_CAP,
-    Sector3WallWireRepairCount = GENERIC_OBJECTIVE_CAP,
-}
-
 -- == GameState-scoped generic "bScalesWithPlayers" objective array ==
 local GENERIC_OBJECTIVE_CLASSES = {
     "MultiplayerGameState", "Level0GameState", "Level1GameState", "Level3GameState",
@@ -543,18 +522,6 @@ local function cap_requirement_prop(obj, prop, cap, label)
     end
     safe("objcap_fnu", function() obj:ForceNetUpdate() return true end)
     return true
-end
-
-local function cap_requirement_object(obj, label)
-    obj = unwrap_param(obj)
-    if not obj or not is_real_instance(obj) then return 0 end
-    local changed = 0
-    for prop, cap in pairs(ELEVATOR_PROPS) do
-        if cap_requirement_prop(obj, prop, cap, label or "object") then
-            changed = changed + 1
-        end
-    end
-    return changed
 end
 
 local function cap_props_on_classes(classes, props, reason)
@@ -840,7 +807,7 @@ end
 -- for ≤6; at 7–16 the geometry can't fit everyone and the gate prevents progress.
 local function cap_all_players_gates(reason)
     if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
-    local players = collect_players()
+    local players = (collect_players and collect_players()) or {}
     if #players <= ALL_PLAYERS_GATE_CAP then return 0 end
     local total = 0
     for _, class_name in ipairs(ALL_PLAYERS_GATE_CLASSES) do
@@ -862,23 +829,39 @@ local function cap_all_players_gates(reason)
     return total
 end
 
--- Level 232: ScaledPricePercent is NOT modified. We cannot prove the authored
--- 6-player value or direction from the dump, and the user confirmed that changing
--- it risks making things harder instead of easier. Instead, Level 232 gets easier via:
---  (a) ItemSpawnRates supply scaling (more items to sell = more money)
---  (b) CheckoutLane.CouponMultiplier scaled up (coupons give better sell prices)
--- This function also logs diagnostics for the full price chain.
+-- Level 232: improve the sell-price chain for >6 players. BET 0.14.6's own
+-- patch notes confirm price scaling is an earned-percentage mechanic, so for
+-- larger groups we scale the global ScaledPricePercent plus per-lane multipliers
+-- upward from first observed runtime values. This remains a no-op at <=6.
 local s232_price_logged = false
 local function cap_s232_price(reason)
     if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
     local players = effective_player_count()
+    local factor = players / SUPPLY_BASE_PLAYERS
+    local total = 0
+    local s232_live = false
     for _, class_name in ipairs(S232_PRICE_CLASSES) do
         local list = safe("S232F_" .. class_name, function() return FindAllOf(class_name) end)
         if list then
             for _, obj in pairs(list) do
                 if is_real_instance(obj) then
+                    s232_live = true
+                    local sp = safe("S232R_SP", function() return obj.ScaledPricePercent end)
+                    if players > SUPPLY_BASE_PLAYERS and type(sp) == "number" and sp > 0 then
+                        local key = supply_original_key(obj, "ScaledPricePercent")
+                        local base = supply_scaled_original[key] or sp
+                        supply_scaled_original[key] = base
+                        local target = ceil_int(base * factor * 100) / 100
+                        if target > sp then
+                            if safe("S232R_SP_W", function() obj.ScaledPricePercent = target return true end) then
+                                total = total + 1
+                                log(string.format("[S232] GameState.ScaledPricePercent %.2f -> %.2f (base=%.2f factor=%.2f %s)",
+                                    sp, target, base, factor, object_label(obj)))
+                                safe("S232R_SP_FNU", function() obj:ForceNetUpdate() return true end)
+                            end
+                        end
+                    end
                     if not s232_price_logged then
-                        local sp = safe("S232R_SP", function() return obj.ScaledPricePercent end)
                         local rq = safe("S232R_RQ", function() return obj.RequiredQuota end)
                         local cq = safe("S232R_CQ", function() return obj.CurrentQuota end)
                         local maxp = safe("S232R_MXP", function() return obj.MaxNumberOfItemsForPurchase end)
@@ -891,10 +874,10 @@ local function cap_s232_price(reason)
             end
         end
     end
-    -- Scale up CheckoutLane CouponMultiplier for >6 players.
-    -- Higher coupon = better sell prices = easier to meet quota.
+    if not s232_live then return 0 end
+    -- Scale up checkout-lane multipliers for >6 players.
+    -- Higher multipliers = better sell prices = easier to meet quota.
     if players > SUPPLY_BASE_PLAYERS then
-        local factor = players / SUPPLY_BASE_PLAYERS
         local lanes = safe("S232Lanes", function() return FindAllOf("AALevel232CheckoutLane") end)
         if lanes then
             for _, lane in pairs(lanes) do
@@ -906,9 +889,11 @@ local function cap_s232_price(reason)
                         supply_scaled_original[key] = base
                         local target = ceil_int(base * factor * 100) / 100
                         if target > cm then
-                            safe("S232CouponW", function() lane.CouponMultiplier = target return true end)
-                            log(string.format("[S232] CheckoutLane.CouponMultiplier %.2f -> %.2f (base=%.2f factor=%.2f %s)",
-                                cm, target, base, factor, object_label(lane)))
+                            if safe("S232CouponW", function() lane.CouponMultiplier = target return true end) then
+                                total = total + 1
+                                log(string.format("[S232] CheckoutLane.CouponMultiplier %.2f -> %.2f (base=%.2f factor=%.2f %s)",
+                                    cm, target, base, factor, object_label(lane)))
+                            end
                         end
                     end
                     -- Also scale LaneMultiplier (per-lane base price multiplier)
@@ -919,16 +904,18 @@ local function cap_s232_price(reason)
                         supply_scaled_original[key] = base
                         local target = ceil_int(base * factor * 100) / 100
                         if target > lm then
-                            safe("S232LaneW", function() lane.LaneMultiplier = target return true end)
-                            log(string.format("[S232] CheckoutLane.LaneMultiplier %.2f -> %.2f (base=%.2f factor=%.2f %s)",
-                                lm, target, base, factor, object_label(lane)))
+                            if safe("S232LaneW", function() lane.LaneMultiplier = target return true end) then
+                                total = total + 1
+                                log(string.format("[S232] CheckoutLane.LaneMultiplier %.2f -> %.2f (base=%.2f factor=%.2f %s)",
+                                    lm, target, base, factor, object_label(lane)))
+                            end
                         end
                     end
                 end
             end
         end
     end
-    return 0
+    return total
 end
 
 local function cap_level_objective_array(owner, prop, reason)
@@ -1217,7 +1204,6 @@ local spawn_fix_applied = false
 local level_detected = false
 local level_detect_time = 0
 local diag_tick = 0
-local scan_done = false
 
 -- v2.4 cluster-fix tunables (RELATIVE detection — no absolute floor constants).
 -- CONFIRMED model: correct players spawn in an elevator + ride a cutscene down,
@@ -1291,106 +1277,6 @@ local travel_arm_tick = 0          -- tick when we armed the post-travel summon
 -- or modified. Ctrl+N toggles it. Host tools remain host-gated separately.
 local SELF_NO_COLLISION_KEY_LABEL = "Ctrl+N"
 
--- Dynamic spawn data (populated at runtime from actual PlayerStart objects)
-local level0_spawns = {}
-local level0_z = nil
-local neg1_threshold_z = nil
-
--- Hardcoded fallback (only used if dynamic detection fails entirely)
-local FALLBACK_SPAWNS = {
-    {X = -333, Y = -333, Z = -8400},
-    {X = -333, Y = 0,    Z = -8400},
-    {X = -333, Y = 333,  Z = -8400},
-    {X = 0,    Y = -333, Z = -8400},
-    {X = 0,    Y = 0,    Z = -8400},
-    {X = 0,    Y = 333,  Z = -8400},
-    {X = 333,  Y = -333, Z = -8400},
-    {X = 333,  Y = 0,    Z = -8400},
-    {X = 333,  Y = 333,  Z = -8400},
-}
-local FALLBACK_LEVEL0_Z = -8400
-local FALLBACK_THRESHOLD_Z = -8100
-
-local next_spawn_idx = 1
-
-local function get_next_spawn()
-    local spawns = (#level0_spawns > 0) and level0_spawns or FALLBACK_SPAWNS
-    local sp = spawns[next_spawn_idx]
-    next_spawn_idx = (next_spawn_idx % #spawns) + 1
-    return sp
-end
-
-local function scan_player_starts()
-    local psclass = resolve_class("playerstart")
-    local starts = safe("ScanStarts", function()
-        return FindAllOf(psclass)
-    end)
-    if not starts then return false end
-
-    local l0_positions = {}
-    local neg1_positions = {}
-    local l0_count = 0
-    local neg1_count = 0
-
-    for idx, ps in pairs(starts) do
-        if is_real_instance(ps) then
-        local name = safe("PSName", function()
-            return ps:GetFullName()
-        end)
-        local loc = get_actor_pos(ps, "PSLoc")
-
-        if name and loc and loc.Z then
-            local name_str = tostring(name)
-            if string.find(name_str, "Level0Checkpoint")
-                or string.find(name_str, "Checkpoint") then
-                l0_count = l0_count + 1
-                l0_positions[#l0_positions + 1] = {
-                    X = loc.X, Y = loc.Y, Z = loc.Z
-                }
-            elseif string.find(name_str, "Neg1")
-                or string.find(name_str, "Neg") then
-                neg1_count = neg1_count + 1
-                neg1_positions[#neg1_positions + 1] = {
-                    X = loc.X, Y = loc.Y, Z = loc.Z
-                }
-            end
-        end
-        end
-    end
-
-    log(string.format("[ADAPT] Scanned PlayerStarts: Level0=%d Neg1=%d",
-        l0_count, neg1_count))
-
-    if l0_count > 0 then
-        level0_spawns = l0_positions
-        -- Derive Z threshold dynamically:
-        -- Level0 Z is the average Z of checkpoint spawns
-        local z_sum = 0
-        for _, pos in ipairs(l0_positions) do
-            z_sum = z_sum + pos.Z
-        end
-        level0_z = z_sum / #l0_positions
-
-        -- Threshold: midpoint between Level0 Z and the highest Neg1 Z
-        if neg1_count > 0 then
-            local max_neg1_z = -999999
-            for _, pos in ipairs(neg1_positions) do
-                if pos.Z > max_neg1_z then max_neg1_z = pos.Z end
-            end
-            neg1_threshold_z = (level0_z + max_neg1_z) / 2
-        else
-            -- No Neg1 found, use offset from Level0
-            neg1_threshold_z = level0_z + 300
-        end
-
-        log(string.format("[ADAPT] Dynamic: Level0_Z=%.0f Threshold_Z=%.0f Spawns=%d",
-            level0_z, neg1_threshold_z, #level0_spawns))
-        return true
-    end
-
-    return false
-end
-
 local function median(vals)
     local n = #vals
     if n == 0 then return nil end
@@ -1402,31 +1288,93 @@ local function median(vals)
     return (s[h] + s[h + 1]) / 2
 end
 
--- Collect every real, POSSESSED in-level character with a readable position.
--- Possession (Controller present) is the gate that excludes lobby/CDO/spectator
--- pawns. Garbage reads (Z==0 sentinel, unreadable) are dropped.
+-- Exact player-pawn classes only. Do not include generic Character here: broad
+-- Character scans can include AI/monster pawns and Ctrl+G must never move them.
+local PLAYER_CHARACTER_CLASSES = {
+    "BP_Survivor_Character_C",
+    "SurvivorCharacter",
+}
+local PLAYER_CHARACTER_FALLBACK_CLASSES = {
+    "Character",
+}
+
+local function get_valid_player_state(ctrl, label)
+    if not ctrl or not is_real_instance(ctrl) then return nil end
+    return safe((label or "Player") .. "PS", function()
+        local ps = ctrl.PlayerState
+        if ps and ps:IsValid() then return ps end
+        return nil
+    end)
+end
+
+local function is_player_controlled_character(char, label)
+    if not char or not is_real_instance(char) then return nil, nil end
+    local ctrl = safe((label or "Player") .. "Ctrl", function()
+        local c = char.Controller
+        if c and c:IsValid() then return c end
+        return nil
+    end)
+    if not ctrl then return nil, nil end
+    local ps = get_valid_player_state(ctrl, label or "Player")
+    if not ps then return nil, nil end
+    return ctrl, ps
+end
+
+local function looks_like_survivor_actor(char)
+    local full = object_label(char)
+    return string.find(full, "Survivor", 1, true) ~= nil
+        or string.find(full, "BP_Survivor", 1, true) ~= nil
+end
+
+-- Collect every real, player-controlled in-level survivor with a readable position.
+-- Eligibility is intentionally stricter than "has any Controller": Ctrl+G and the
+-- spawn fix teleport these actors, so require an exact survivor class plus a valid
+-- Controller->PlayerState chain. This excludes AI/monster pawns even if they are
+-- possessed by AI controllers, and avoids UE4SS wrapper equality hazards elsewhere.
 collect_players = function()
-    local charclass = resolve_class("character")
-    local chars = safe("CollectFind", function() return FindAllOf(charclass) end)
     local out = {}
-    if not chars then return out end
-    for _, char in pairs(chars) do
-        if is_real_instance(char) then
-            local ctrl = safe("CollCtrl", function()
-                local c = char.Controller
-                if c and c:IsValid() then return c end
-                return nil
-            end)
-            if ctrl then
-                local loc = get_actor_pos(char, "Coll")
-                if loc and loc.Z and not (loc.Z == 0 and (loc.X or 0) == 0 and (loc.Y or 0) == 0) then
-                    out[#out + 1] = {
-                        char = char,
-                        name = get_player_name(char, "Coll") or "?",
-                        X = loc.X or 0, Y = loc.Y or 0, Z = loc.Z,
-                    }
+    for _, charclass in ipairs(PLAYER_CHARACTER_CLASSES) do
+        local chars = safe("CollectFind_" .. charclass, function() return FindAllOf(charclass) end)
+        if chars then
+            for _, char in pairs(chars) do
+                local ctrl, ps = is_player_controlled_character(char, "Coll")
+                if ctrl and ps then
+                    local loc = get_actor_pos(char, "Coll")
+                    if loc and loc.Z and not (loc.Z == 0 and (loc.X or 0) == 0 and (loc.Y or 0) == 0) then
+                        out[#out + 1] = {
+                            char = char,
+                            name = get_player_name(char, "Coll") or "?",
+                            X = loc.X or 0, Y = loc.Y or 0, Z = loc.Z,
+                        }
+                    end
                 end
             end
+        end
+        -- Prefer the exact BP survivor class. Only try the native survivor fallback
+        -- if no valid player pawns were readable under the exact class name.
+        if #out > 0 then break end
+    end
+    if #out == 0 then
+        for _, charclass in ipairs(PLAYER_CHARACTER_FALLBACK_CLASSES) do
+            local chars = safe("CollectFindFallback_" .. charclass, function() return FindAllOf(charclass) end)
+            if chars then
+                for _, char in pairs(chars) do
+                    if looks_like_survivor_actor(char) then
+                        local ctrl, ps = is_player_controlled_character(char, "CollFB")
+                        if ctrl and ps then
+                            local loc = get_actor_pos(char, "CollFB")
+                            if loc and loc.Z and not (loc.Z == 0 and (loc.X or 0) == 0 and (loc.Y or 0) == 0) then
+                                out[#out + 1] = {
+                                    char = char,
+                                    name = get_player_name(char, "CollFB") or "?",
+                                    X = loc.X or 0, Y = loc.Y or 0, Z = loc.Z,
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+            if #out > 0 then break end
         end
     end
     return out
@@ -1665,7 +1613,6 @@ local function do_level_step(delta, tag)
     -- reset spawn-fix state so the auto-fix re-arms in the new level
     spawn_fix_applied = false
     level_detected = false
-    scan_done = false
     last_median_z = nil
     settled_reads = 0
     log(string.format("[LEVELSW] %s: level %d -> %d (%s)",
@@ -1752,7 +1699,6 @@ local function reload_current_level()
     -- re-arm per-level state so spawn-fix + detection run again on reload
     spawn_fix_applied = false
     level_detected = false
-    scan_done = false
     last_median_z = nil
     settled_reads = 0
     log("[RELOAD] Ctrl+J: reloading current level -> " .. path)
@@ -1857,8 +1803,9 @@ local function probe_elevator()
         log("[PROBE] CollisionBox not readable")
     end
     local r = safe("p_check", function() return e:CheckForPlayersInElevator() end)
+    local players = (collect_players and collect_players()) or {}
     log("[PROBE] CheckForPlayersInElevator() -> " .. tostring(r)
-        .. " ; possessed=" .. tostring(#collect_players()))
+        .. " ; possessed=" .. tostring(#players))
 end
 
 -- Ctrl+P: cram EVERY possessed player (incl. host) into the elevator trigger box
@@ -2226,15 +2173,6 @@ local function run_monitor()
         end
     end
 
-    -- Phase 2: Scan PlayerStarts — retry each tick until it succeeds
-    -- (PlayerStart actors may not be fully replicated on the very first tick)
-    if not scan_done then
-        scan_done = scan_player_starts()
-        if not scan_done then
-            log("[ADAPT] PlayerStart scan not ready yet, will retry (fallback coords meanwhile)")
-        end
-    end
-
     -- Phase 3: Spawn fix ENABLED (v2.4) — RELATIVE cluster-outlier teleport.
     -- SPAWN-TIME ONLY: only attempt within FIX_MAX_TICKS of level detection. After
     -- that window a far-away player most likely WENT to Neg1 legitimately (it's an
@@ -2322,7 +2260,7 @@ end)
 log("init complete - adaptive v" .. VERSION)
 log("[ADAPT] Position detection: will try 5 methods (GetActorLocation, K2_GetActorLocation, RootComponent.RelativeLocation, RootComponent.XYZ, GetTransform)")
 log("[SUMMON] Host keybind Ctrl+G (gather all players to host) will arm once in a real level")
-log("[LEVELSW] Ctrl+K/L level-test keys are disabled by default; set ENABLE_LEVEL_TEST_KEYS=true for diagnostics")
+log("[LEVELSW] Ctrl+K/L previous/next level keybinds are enabled by default")
 log("[RELOAD] Host keybind Ctrl+J (reload current level, un-stick loading) will arm once in a real level")
 log("[PROBE] Host keybind Ctrl+O (read elevator gate, READ-ONLY probe/detect) will arm once in a real level")
 log("[BOARD] Host keybind Ctrl+P (teleport all players into elevator) will arm once in a real level")

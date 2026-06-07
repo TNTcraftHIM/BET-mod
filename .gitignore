@@ -9,3 +9,13 @@ release/
 dist/*.zip
 vendor/
 ue4ss_backup/
+
+# Local-only UE4SS/game dumps. Keep versioned snapshots here for audits, but do
+# not sync generated game dumps or SDK headers to git.
+local_dumps/
+**/UE4SS.log
+**/UE4SS_ObjectDump.txt
+**/CXXHeaderDump/
+**/UHTHeaderDump/
+**/USMapDump*.usmap
+**/StaticMeshesDump*.txt

@@ -6,6 +6,40 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.3 (2026-06-07)
+
+- **Hotfix: Ctrl+G never gathers monsters.** `collect_players()` now uses exact
+  survivor pawn classes only and requires a valid `Controller -> PlayerState`
+  chain before any actor is eligible for Ctrl+G, spawn-fix, elevator boarding, or
+  player-count-sensitive caps. It no longer depends on the generic `Character`
+  fallback that could include AI/monster pawns.
+- **Hotfix: Level 232 income scaling.** BET 0.14.6 confirms Level 232 price
+  scaling is an earned-percentage mechanic. For >6 players, the mod now scales
+  `Level232GameState.ScaledPricePercent` upward from its first observed runtime
+  value in addition to the checkout-lane `LaneMultiplier` / `CouponMultiplier`
+  links. All of this remains a no-op at ≤6 players.
+- **Local dump management.** Added ignored `local_dumps/` / UE4SS dump patterns so
+  updated game dumps can be kept versioned locally for audits without syncing
+  generated SDK/object dumps into git or release packages.
+
+## v2.19.2 (2026-06-07)
+
+- **Code audit cleanup.** Removed unused/stale implementation scaffolding that no
+  longer participates in the current host-anchor spawn fix or objective/supply cap
+  paths: the old PlayerStart fallback scan state, the unused one-object elevator cap
+  wrapper, the unused Level 232 `ScaledPricePercent` props table, and the disabled
+  Level 3 wire-cap placeholder table. The Level 3 wire decision remains documented
+  as "do not cap until live testing proves it is a requirement."
+- **Safer diagnostics and gate scans.** Direct `collect_players()` consumers in the
+  all-players gate scan and elevator probe now fall back to an empty table if the
+  forward-declared collector is not available yet, matching the defensive style used
+  by `effective_player_count()`.
+- **Level 232 side-effect accounting.** `cap_s232_price()` still leaves
+  `ScaledPricePercent` read-only, but now returns the number of successfully scaled
+  `CouponMultiplier` / `LaneMultiplier` writes instead of always returning `0`.
+- **Log/doc consistency.** Startup logging now correctly says Ctrl+K/L previous/next
+  level keybinds are enabled by default, matching the current release config.
+
 ## v2.19.1 (2026-06-04)
 
 - **Bugfix: Level 6 puzzle scale guard.** `cap_level6_puzzle_scale()` previously
@@ -109,7 +143,7 @@ available yet.
 A line-by-line re-read of `BETGame.hpp` / `UE4SS_ObjectDump.txt` confirmed which
 player-scaled fields are *requirements* (cap them down) versus *supply/spawns* (must
 NOT be capped, or larger groups get less) versus *monster difficulty* (out of scope
-for the objective cap). See `docs/research/full_player_scaling_audit_v217.md`.
+for the objective cap). See `docs/research/full_player_scaling_audit.md`.
 
 - **Level FUN warehouse coins**: `LevelFUNChunkManager.WarehouseRequiredCoinsTotals`
   (`TArray<int32>`) is a requirement total per warehouse. Added a real int-array
@@ -172,7 +206,7 @@ Design principle: **same difficulty as ≤6 players, just with up to 16 people.*
 
 > From a line-by-line read of every LevelNChunkManager / GameState / GameMode /
 > progression actor in BETGame.hpp (v2.16 dump), with line numbers and offsets.
-> See `docs/research/full_player_scaling_audit_v217.md` for the complete table.
+> See `docs/research/full_player_scaling_audit.md` for the complete table.
 
 - **Scales with players (confirmed by curve / per-player field):**
   - Level 3 wire/repair-item spawning (`PlayerCountToWireCurve`,

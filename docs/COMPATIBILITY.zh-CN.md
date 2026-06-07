@@ -4,7 +4,7 @@
 
 ## 测试目标
 
-BETPlayerCap v2.19.1 是针对 **Backrooms: Escape Together** 的 Steam Windows 版本构建并测试的，
+BETPlayerCap v2.19.3 是针对 **Backrooms: Escape Together** 的 Steam Windows 版本构建并测试的，
 使用了来自可正常工作的测试安装环境的 Unreal Engine **5.7.4** 与 UE4SS **3.0.1** 运行时
 文件/签名。
 

@@ -212,7 +212,7 @@ No ChunkManager or GameState with player-scaled fields identified.
 | Field | Type | Offset | Category | Our action |
 |-------|------|--------|----------|------------|
 | `RequiredQuota` | `float` | 0x05D0 | **Target amount** | — (read-only) |
-| `ScaledPricePercent` | `float` | 0x05D4 | **Global sell price** | ⚪ Read-only log |
+| `ScaledPricePercent` | `float` | 0x05D4 | Global sell-price percentage multiplier | Scale up for >6 since v2.19.3; no-op at ≤6 |
 | `SaleCatalog` | `TSoftObjectPtr<UBETStoreCatalog>` | 0x05F8 | Items players can sell | — |
 | `PurchaseCatalog` | `TSoftObjectPtr<UBETStoreCatalog>` | 0x0620 | Items players can buy | — |
 | `ItemsForSale` | `FLevel232ShopItemArray` | 0x0658 | Current sellable items | — |
@@ -323,7 +323,7 @@ SellPrice = BasePrice
           × ScaledPricePercent     (GameState global — player-count-related?)
 ```
 
-**Key insight:** There are **multiple multipliers** in the chain. `ScaledPricePercent` is just one of them. `CouponMultiplier` is another, applied per-lane and triggered by players.
+**Key insight:** There are **multiple multipliers** in the chain. `ScaledPricePercent` is the global earned-percentage multiplier (confirmed by BET 0.14.6 patch notes), while `LaneMultiplier` and `CouponMultiplier` are per-lane links. v2.19.3 scales all three upward for >6 players from first observed runtime values.
 
 ---
 
@@ -479,7 +479,7 @@ No player-scaled fields identified.
 
 ---
 
-## Inventory of All Mod Actions (v2.19.1)
+## Inventory of All Mod Actions (v2.19.3)
 
 | Target | Action | Trigger |
 |--------|--------|---------|
