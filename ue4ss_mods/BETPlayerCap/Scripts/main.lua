@@ -23,7 +23,7 @@ local ALL_PLAYERS_GATE_CAP = 6
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
 -- ======================================================================
-local VERSION = "2.19.3-summon-money-hotfix"
+local VERSION = "2.19.4-second-run-recap"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -1205,6 +1205,41 @@ local level_detected = false
 local level_detect_time = 0
 local diag_tick = 0
 
+-- Live world identity, used to detect GAME-DRIVEN level transitions (the in-game
+-- elevator, a lobby return, or a fresh run from a cleared save) — not just the
+-- mod's own Ctrl+K/L/J. Without this, level_detected latches true on the first
+-- gameplay level and the immediate full cap/scale pass (Phase 1) plus the
+-- per-level base maps never re-arm. A second playthrough could then leave a
+-- freshly spawned level's requirements uncapped and reuse stale supply bases
+-- keyed by a re-used object name. See docs/research/known_issues.md.
+local last_world_name = nil
+local function current_world_name()
+    if not UEHelpers then return nil end
+    return safe("CurWorldName", function()
+        local w = UEHelpers.GetWorld()
+        if w and w:IsValid() then return w:GetName() end
+        return nil
+    end)
+end
+
+-- Re-arm all per-level state so the next monitor tick re-detects the level and
+-- re-runs the full immediate cap/scale pass. Also clears the per-level dedup/base
+-- maps so bases are re-captured from the CURRENT level's authored values instead
+-- of carrying a stale base keyed by a re-used object name. Safe: this only ever
+-- forces caps/scales to be re-applied; it never removes a cap.
+local function reset_per_level_state(reason)
+    spawn_fix_applied = false
+    level_detected = false
+    last_median_z = nil
+    settled_reads = 0
+    supply_scaled_original = {}
+    objective_cap_changed = {}
+    objective_cap_hook_fired = {}
+    s232_price_logged = false
+    l6_scale_logged = false
+    log("[STATE] per-level state re-armed (" .. tostring(reason) .. ")")
+end
+
 -- v2.4 cluster-fix tunables (RELATIVE detection — no absolute floor constants).
 -- CONFIRMED model: correct players spawn in an elevator + ride a cutscene down,
 -- ending tightly CLUSTERED. A mis-spawned player is dropped at a Neg1 PlayerStart
@@ -1611,10 +1646,7 @@ local function do_level_step(delta, tag)
     summon_wait_count = 0
     travel_arm_tick = diag_tick
     -- reset spawn-fix state so the auto-fix re-arms in the new level
-    spawn_fix_applied = false
-    level_detected = false
-    last_median_z = nil
-    settled_reads = 0
+    reset_per_level_state(tag)
     log(string.format("[LEVELSW] %s: level %d -> %d (%s)",
         tag, cur, nxt, LEVEL_MAPS[nxt]))
     server_travel(LEVEL_MAPS[nxt])
@@ -1697,10 +1729,7 @@ local function reload_current_level()
     summon_wait_count = 0
     travel_arm_tick = diag_tick
     -- re-arm per-level state so spawn-fix + detection run again on reload
-    spawn_fix_applied = false
-    level_detected = false
-    last_median_z = nil
-    settled_reads = 0
+    reset_per_level_state("Ctrl+J reload")
     log("[RELOAD] Ctrl+J: reloading current level -> " .. path)
     server_travel(path)
 end
@@ -2141,6 +2170,24 @@ end
 ---------------------------------------------------------------------------
 local function run_monitor()
     diag_tick = diag_tick + 1
+
+    -- Phase 0: Detect a GAME-DRIVEN level transition. The mod's own Ctrl+K/L/J
+    -- re-arm per-level state, but a level finished through the in-game elevator,
+    -- a return to the lobby, or a fresh run from a cleared save does not. Without
+    -- this, level_detected stays latched and the immediate full cap/scale pass
+    -- never re-fires on a second playthrough, leaving the new level's
+    -- requirements uncapped and reusing stale supply bases. Watch the live world
+    -- name and re-arm when it changes. See docs/research/known_issues.md.
+    local wname = current_world_name()
+    if wname and wname ~= "" then
+        if last_world_name == nil then
+            last_world_name = wname
+        elseif wname ~= last_world_name then
+            log("[STATE] world changed: " .. tostring(last_world_name) .. " -> " .. tostring(wname))
+            last_world_name = wname
+            if level_detected then reset_per_level_state("world-change") end
+        end
+    end
 
     -- Phase 1: Detect game level (CDO-filtered, gameplay-specific signal only)
     if not level_detected then

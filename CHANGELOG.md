@@ -6,6 +6,19 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.4 (2026-06-07)
+
+- **Fix: caps now re-apply on a second playthrough.** `level_detected` previously
+  latched `true` on the first gameplay level and was reset only by the mod's own
+  Ctrl+K/L/J handlers, so a game-driven transition (finishing a level through the
+  in-game elevator, returning to the lobby, or starting a fresh run from a cleared
+  save) never re-ran the immediate full cap/scale pass and kept stale per-level
+  bases. The monitor now watches the live world name and calls a new
+  `reset_per_level_state()` on any change, which re-arms detection and clears
+  `supply_scaled_original` / `objective_cap_changed` / `objective_cap_hook_fired`
+  / `s232_price_logged` / `l6_scale_logged`. The reset only ever forces
+  re-application; it never removes a cap. See `docs/research/known_issues.md`.
+
 ## v2.19.3 (2026-06-07)
 
 - **Hotfix: Ctrl+G never gathers monsters.** `collect_players()` now uses exact

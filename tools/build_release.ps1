@@ -1,6 +1,6 @@
 param(
     [string]$GameRoot = $(if ($env:BET_GAME_ROOT) { $env:BET_GAME_ROOT } else { "F:\Steam\steamapps\common\Backrooms_Escape_Together" }),
-    [string]$Version = "v2.19.3"
+    [string]$Version = "v2.19.4"
 )
 $ErrorActionPreference = 'Stop'
 
