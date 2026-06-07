@@ -23,7 +23,7 @@ local ALL_PLAYERS_GATE_CAP = 6
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
 -- ======================================================================
-local VERSION = "2.19.6-economy-rebalance"
+local VERSION = "2.19.7-cleanup"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -241,7 +241,6 @@ log("v" .. VERSION .. " loaded - target cap: " .. TARGET_CAP .. ", objective cap
 ---------------------------------------------------------------------------
 local CLASS_NAMES = {
     widget = {"BETMultiplayerSettingsWidget"},
-    gamemode = {"BP_Level0GameMode_C", "BETGameMode", "GameModeBase"},
 }
 
 local resolved_classes = {}
@@ -398,11 +397,9 @@ local ELEVATOR_PROPS = {
 }
 
 -- == "All players must be present" gates — force false when > ALL_PLAYERS_GATE_CAP ==
+-- cap_all_players_gates() reads/writes bRequiresAllPlayers directly on these classes.
 local ALL_PLAYERS_GATE_CLASSES = {
     "InteractableTeleporter", "LevelExitBase",
-}
-local ALL_PLAYERS_GATE_PROPS = {
-    bRequiresAllPlayers = false,  -- cap_requirement_prop sets bools to target when true
 }
 
 -- == Level 232: scale the global player-scaled sell-price percentage UP for >6 players ==
@@ -826,11 +823,18 @@ local function cap_s232_price(reason)
                         supply_scaled_original[key] = base
                         local target = ceil_int(base * factor * 100) / 100
                         if target > sp then
-                            if safe("S232R_SP_W", function() obj.ScaledPricePercent = target return true end) then
+                            safe("S232R_SP_W", function() obj.ScaledPricePercent = target return true end)
+                            -- Verify the write stuck (the game may clamp ScaledPricePercent),
+                            -- mirroring scale_supply_number / cap_requirement_prop.
+                            local now = safe("S232R_SP_V", function() return obj.ScaledPricePercent end)
+                            if type(now) == "number" and now >= target then
                                 total = total + 1
                                 log(string.format("[S232] GameState.ScaledPricePercent %.2f -> %.2f (base=%.2f factor=%.2f %s)",
                                     sp, target, base, factor, object_label(obj)))
                                 safe("S232R_SP_FNU", function() obj:ForceNetUpdate() return true end)
+                            else
+                                log(string.format("[S232] GameState.ScaledPricePercent write did not stick (sp=%.2f target=%.2f actual=%s)",
+                                    sp, target, tostring(now)))
                             end
                         end
                     end
@@ -940,8 +944,13 @@ local function cap_generic_scaled_objectives(reason)
     return total
 end
 
-local function register_cap_hook(path, props)
-    local ok = safe("ObjCapHook_" .. path, function()
+-- Shared skeleton for the "self-based" objective-cap hooks: unwrap the hooked
+-- object from `self`, then on the game thread (host-only, ENABLE_OBJECTIVE_CAP)
+-- run `body(obj, path)`. `label` is only the safe()/error-log prefix. The four
+-- callers below differ ONLY in that prefix and `body`, so this collapses what used
+-- to be four character-for-character identical boilerplate blocks into one.
+local function register_self_obj_hook(path, label, body)
+    local ok = safe(label .. path, function()
         RegisterHook(path, function(self, ...)
             -- UE4SS hook params are RemoteUnrealParam-style wrappers; unwrap them
             -- synchronously inside the hook callback, before the wrapper can go stale.
@@ -954,18 +963,20 @@ local function register_cap_hook(path, props)
                     objective_cap_hook_fired[path] = true
                     log("[OBJCAP] hook fired: " .. path .. " on " .. object_label(obj))
                 end
-                for prop, cap in pairs(props) do
-                    cap_requirement_prop(obj, prop, cap, path)
-                end
+                body(obj, path)
             end)
         end)
         return true
     end)
-    if ok then
-        log("[OBJCAP] hook registered: " .. path)
-    else
-        log("[OBJCAP] hook unavailable: " .. path)
-    end
+    log(ok and ("[OBJCAP] hook registered: " .. path) or ("[OBJCAP] hook unavailable: " .. path))
+end
+
+local function register_cap_hook(path, props)
+    register_self_obj_hook(path, "ObjCapHook_", function(obj)
+        for prop, cap in pairs(props) do
+            cap_requirement_prop(obj, prop, cap, path)
+        end
+    end)
 end
 
 local function register_objective_cap_hook(path)
@@ -973,77 +984,23 @@ local function register_objective_cap_hook(path)
 end
 
 local function register_generic_objective_hook(path)
-    local ok = safe("ObjCapHook_" .. path, function()
-        RegisterHook(path, function(self, ...)
-            local obj = unwrap_param(self)
-            if not obj or not is_real_instance(obj) then return end
-            ExecuteInGameThread(function()
-                if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return end
-                if not is_real_instance(obj) then return end
-                if not objective_cap_hook_fired[path] then
-                    objective_cap_hook_fired[path] = true
-                    log("[OBJCAP] hook fired: " .. path .. " on " .. object_label(obj))
-                end
-                cap_level_objective_array(obj, "CurrentObjectives", path)
-            end)
-        end)
-        return true
+    register_self_obj_hook(path, "ObjCapHook_", function(obj)
+        cap_level_objective_array(obj, "CurrentObjectives", path)
     end)
-    if ok then
-        log("[OBJCAP] hook registered: " .. path)
-    else
-        log("[OBJCAP] hook unavailable: " .. path)
-    end
 end
 
 local function register_int_array_cap_hook(path, prop)
-    local ok = safe("ObjCapHook_" .. path, function()
-        RegisterHook(path, function(self, ...)
-            local obj = unwrap_param(self)
-            if not obj or not is_real_instance(obj) then return end
-            ExecuteInGameThread(function()
-                if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return end
-                if not is_real_instance(obj) then return end
-                if not objective_cap_hook_fired[path] then
-                    objective_cap_hook_fired[path] = true
-                    log("[OBJCAP] hook fired: " .. path .. " on " .. object_label(obj))
-                end
-                cap_int_array_prop(obj, prop, GENERIC_OBJECTIVE_CAP, path)
-            end)
-        end)
-        return true
+    register_self_obj_hook(path, "ObjCapHook_", function(obj)
+        cap_int_array_prop(obj, prop, GENERIC_OBJECTIVE_CAP, path)
     end)
-    if ok then
-        log("[OBJCAP] hook registered: " .. path)
-    else
-        log("[OBJCAP] hook unavailable: " .. path)
-    end
 end
 
 local function register_curve_requirement_hook(path)
-    local ok = safe("CurveReqHook_" .. path, function()
-        RegisterHook(path, function(self, ...)
-            local obj = unwrap_param(self)
-            if not obj or not is_real_instance(obj) then return end
-            ExecuteInGameThread(function()
-                if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return end
-                if not is_real_instance(obj) then return end
-                if not objective_cap_hook_fired[path] then
-                    objective_cap_hook_fired[path] = true
-                    log("[OBJCAP] hook fired: " .. path .. " on " .. object_label(obj))
-                end
-                for _, spec in ipairs(CURVE_REQUIREMENT_SPECS) do
-                    cap_curve_requirement_object(obj, spec, path)
-                end
-            end)
-        end)
-        return true
+    register_self_obj_hook(path, "CurveReqHook_", function(obj)
+        for _, spec in ipairs(CURVE_REQUIREMENT_SPECS) do
+            cap_curve_requirement_object(obj, spec, path)
+        end
     end)
-    if ok then
-        log("[OBJCAP] hook registered: " .. path)
-    else
-        log("[OBJCAP] hook unavailable: " .. path)
-    end
 end
 
 local function register_supply_scale_hook(path)
@@ -1210,16 +1167,6 @@ local FIX_MAX_TICKS = 8      -- only attempt fix within this many ticks of level
 local NUDGE_STEP   = 100   -- horizontal world units per Ctrl+Arrow
 local NUDGE_STEP_Z = 100   -- vertical world units per Ctrl+PageUp/PageDown
 
--- v2.8 post-travel summon timing. The 2026-05-31 7-player level-switch test showed
--- the OLD post-travel summon firing too early: right after a forced level switch it tried to gather
--- while the host pawn wasn't re-resolved yet ("Could not resolve host pawn — aborting"
--- on Level 3/4) and while stuck players hadn't possessed (only 5 of 7 readable on
--- Level 1). So instead of a fixed "2 ticks after detect", we now WAIT for the group to
--- actually be present + the host pawn resolvable, retrying for a bounded window, then
--- summon ONCE. This avoids yanking a half-loaded group around.
-local SUMMON_WAIT_TICKS = 6     -- give the new level up to this many ticks to settle
-local summon_wait_count = 0     -- ticks waited so far for the current armed summon
-
 -- v2.6 LEVEL-SWITCH (test tool). BET travels between levels via ProcessServerTravel
 -- (seamless), confirmed in BET.log. We use the same path so all clients are carried
 -- along (no drop). Ctrl+K/L step through the map list below.
@@ -1252,8 +1199,7 @@ local LEVEL_MAPS = {
     "/Game/Maps/MainLevels/Level_Neg1/L_Level_Neg1",
 }
 local level_cycle_idx = 0          -- 0 = before first press; advances each Ctrl+K/L level switch
-local summon_after_travel = false  -- set true on travel so post-load we auto-gather
-local travel_arm_tick = 0          -- tick when we armed the post-travel summon
+local summon_after_travel = false  -- set true on travel so post-load we log a "press Ctrl+G" hint
 
 -- Self no-collision toggle: optional per-player tool for clients who also install
 -- the mod. It affects only the local player's pawn; monster actors are never scanned
@@ -1591,8 +1537,6 @@ local function do_level_step(delta, tag)
     local nxt = ((cur - 1 + delta) % #LEVEL_MAPS) + 1
     level_cycle_idx = nxt
     summon_after_travel = true
-    summon_wait_count = 0
-    travel_arm_tick = diag_tick
     -- reset spawn-fix state so the auto-fix re-arms in the new level
     reset_per_level_state(tag)
     log(string.format("[LEVELSW] %s: level %d -> %d (%s)",
@@ -1674,8 +1618,6 @@ local function reload_current_level()
         return
     end
     summon_after_travel = true
-    summon_wait_count = 0
-    travel_arm_tick = diag_tick
     -- re-arm per-level state so spawn-fix + detection run again on reload
     reset_per_level_state("Ctrl+J reload")
     log("[RELOAD] Ctrl+J: reloading current level -> " .. path)
@@ -1717,12 +1659,9 @@ end
 ---------------------------------------------------------------------------
 
 -- Live elevators are BP subclasses of A(Level*)Elevator : AElevator_Base.
-local ELEVATOR_CLASS_NAMES = {
-    "Elevator_Base", "Level0Elevator", "Level2Elevator", "Level4_Elevator",
-    "BP_ElevatorFinal_C", "BP_ElevatorFinal_Level2_C", "BP_Elevator_Level4_C",
-}
+-- Reuses ELEVATOR_CLASSES (defined above for the presence-gate cap) — same class list.
 local function find_elevator()
-    for _, n in ipairs(ELEVATOR_CLASS_NAMES) do
+    for _, n in ipairs(ELEVATOR_CLASSES) do
         local e = find_first_instance(n)
         if e then return e, n end
     end
@@ -2144,7 +2083,8 @@ local function run_monitor()
             level_detected = true
             level_detect_time = diag_tick
             log("[DIAG] Game level detected via " .. tostring(via) .. " at tick " .. diag_tick)
-            -- Register host keybinds now that we're in a real level.
+            -- We're in a real level: (re)register objective-cap hooks, run one immediate
+            -- cap/scale pass, then arm the host keybinds.
             ensure_objective_cap_hooks()
             cap_known_objective_requirements("level-detect")
             cap_generator_requirements("level-detect")
@@ -2169,6 +2109,7 @@ local function run_monitor()
     end
 
     -- Phase 3: Spawn fix ENABLED (v2.4) — RELATIVE cluster-outlier teleport.
+    -- (No "Phase 2": that was the pre-detect post-travel summon-arm, removed in v2.10.)
     -- SPAWN-TIME ONLY: only attempt within FIX_MAX_TICKS of level detection. After
     -- that window a far-away player most likely WENT to Neg1 legitimately (it's an
     -- explorable area), so we must NOT teleport them. The fix self-disables once it

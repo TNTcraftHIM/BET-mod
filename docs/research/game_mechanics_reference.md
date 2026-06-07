@@ -212,7 +212,7 @@ No ChunkManager or GameState with player-scaled fields identified.
 | Field | Type | Offset | Category | Our action |
 |-------|------|--------|----------|------------|
 | `RequiredQuota` | `float` | 0x05D0 | **Target amount** | — (read-only) |
-| `ScaledPricePercent` | `float` | 0x05D4 | Global sell-price percentage multiplier | Scale up for >6 since v2.19.5; no-op at ≤6 |
+| `ScaledPricePercent` | `float` | 0x05D4 | Global sell-price percentage multiplier | Scale up for >6 since v2.19.3 (sole income lever since v2.19.6); no-op at ≤6 |
 | `SaleCatalog` | `TSoftObjectPtr<UBETStoreCatalog>` | 0x05F8 | Items players can sell | — |
 | `PurchaseCatalog` | `TSoftObjectPtr<UBETStoreCatalog>` | 0x0620 | Items players can buy | — |
 | `ItemsForSale` | `FLevel232ShopItemArray` | 0x0658 | Current sellable items | — |
@@ -479,7 +479,7 @@ No player-scaled fields identified.
 
 ---
 
-## Inventory of All Mod Actions (v2.19.6)
+## Inventory of All Mod Actions (v2.19.7)
 
 | Target | Action | Trigger |
 |--------|--------|---------|
@@ -499,6 +499,8 @@ No player-scaled fields identified.
 | `Level232GameState.ScaledPricePercent` | Scale up by `players/6` when >6 (no-op at ≤6); single income lever | Startup + monitor + supply-scale hook |
 | `Level1ChunkManager.NumberOfAlmondWater` | Scale up by `players/6` (int count) | Supply scan |
 | `Level3ChunkManager` lootbox wire/tape counts | Scale up by `players/6` (int counts) | Supply scan |
+| Self pawn collision (Ctrl+N) | Toggle on/off | Keybind |
+
+> This table lists the cap/scale actions only. The host keybinds (Ctrl+G/J/K/L/O/P, Ctrl+Arrows, Ctrl+PageUp/Down) are tools, not cap/scale actions — see the README keybind table for the full list.
 
 > Removed in v2.19.6 (over-scaling / double-counting the game's own 0.14.6 per-player logic): `AALevel232CheckoutLane.LaneMultiplier` and `CouponMultiplier` scaling (compounded income), `Level232ChunkManager.ItemSpawnRates` scaling (loot is now per-player), `Level3ChunkManager.RepairItemMultiplier` scaling (game derives it via `PlayerCountToRepairItemMultiplier` curve), and `LevelNeg1ChunkManager.LootSpawnRatio` scaling (clamped float, was integer-rounded). The float fields were also wrongly passed through `ceil_int`.
-| Self pawn collision (Ctrl+N) | Toggle on/off | Keybind |

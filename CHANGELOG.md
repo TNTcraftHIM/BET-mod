@@ -6,6 +6,30 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.7 (2026-06-07)
+
+Code-quality pass (a full simplify/optimize/check audit with adversarial
+behavior-preservation verification). No gameplay behavior change except one logging
+fix; the cap/scale model is identical to v2.19.6.
+
+- **Simplify: unified the objective-cap hook registrars.** The four near-identical
+  "self-based" hook registrars (`register_cap_hook` / `register_generic_objective_hook`
+  / `register_int_array_cap_hook` / `register_curve_requirement_hook`) now share one
+  `register_self_obj_hook(path, label, body)` helper. Mechanically identical (same
+  safe-labels, same `[OBJCAP]` logging, same hook semantics) — verified by reading
+  since there is no Lua runtime to test against.
+- **Dead code removed.** `ALL_PLAYERS_GATE_PROPS` (never referenced), `SUMMON_WAIT_TICKS`
+  / `summon_wait_count` / `travel_arm_tick` (write-only leftovers from the v2.10
+  auto-summon removal), the duplicate `ELEVATOR_CLASS_NAMES` list (identical to
+  `ELEVATOR_CLASSES`), and the never-resolved `CLASS_NAMES.gamemode` entry. Net −58 lines
+  in `main.lua`.
+- **Fix: `cap_s232_price` now verifies its write.** After writing `ScaledPricePercent`
+  it re-reads the value (like `scale_supply_number` / `cap_requirement_prop`) and logs
+  "write did not stick" instead of falsely reporting success if the game clamps it.
+- **Docs/comments:** corrected the mod README (Level 232 income is scaled, not just
+  "logged"), fixed the `ScaledPricePercent` version attribution (v2.19.3, not v2.19.5)
+  in the research docs, and repaired a stray table row in `game_mechanics_reference.md`.
+
 ## v2.19.6 (2026-06-07)
 
 Found by a full adversarial code+docs+design audit (6 review dimensions, per-finding

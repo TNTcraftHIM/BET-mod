@@ -1,9 +1,9 @@
-# Full Player-Scaling Audit (v2.19.6)
+# Full Player-Scaling Audit (v2.19.7)
 
 > Line-by-line read of every `LevelNChunkManager` / `GameState` / `GameMode` /
 > progression actor in `BETGame.hpp` (2026-06-02 dump, UE 5.7 MSVC shipping build).
 > This is the data that drives the per-class caps, curve-backed baselines,
-> supply scaling, and gate-disables in main.lua v2.19.6+.
+> supply scaling, and gate-disables in main.lua v2.19.7+.
 
 ---
 
@@ -80,7 +80,7 @@ bounded fallback until live logging measures the exact authored values:
 | `ALevel3ChunkManager` | `PlayerCountToWireCurve`, `PlayerCountToRepairItemMultiplier` | UCurveFloat + multiplier name | Level 3 wire/repair-item spawn scaling. Covered by the generic `CurrentObjectives` path if these feed into it; otherwise needs explicit cap. |
 | `AFuseBoard` | `PlayerCountFuseCurve` (UCurveFloat) → `RequiredFuseAmount` | Curve indexed by player count, then written to RequiredFuseAmount | The cap on RequiredFuseAmount above covers the result of this curve. |
 | `ALevelNeg1Manager` | `EntitySpawnChancePerPlayer` + `MaxShadowSpawnAmount` | Per-player float with fixed ceiling | Shadow spawn rate scales but is bounded by MaxShadowSpawnAmount (fixed). Not a blocking gate, just harder at >6. **Not capped** — this is monster difficulty, not an objective requirement. |
-| `Level232GameState` | `ScaledPricePercent` | Scaled by player count | Scaled up for >6 since v2.19.5; 0.14.6 patch notes confirm this is income percentage scaling. |
+| `Level232GameState` | `ScaledPricePercent` | Scaled by player count | Scaled up for >6 since v2.19.3 (sole income lever since v2.19.6); 0.14.6 patch notes confirm this is income percentage scaling. |
 
 ---
 
@@ -119,7 +119,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 
 ---
 
-## Summary of all caps/scales applied by v2.19.6+ mod logic
+## Summary of all caps/scales applied by v2.19.7+ mod logic
 
 | What | Cap / scale value | Method |
 |------|-------------------|--------|
