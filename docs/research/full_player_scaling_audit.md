@@ -1,9 +1,9 @@
-# Full Player-Scaling Audit (v2.19.5)
+# Full Player-Scaling Audit (v2.19.6)
 
 > Line-by-line read of every `LevelNChunkManager` / `GameState` / `GameMode` /
 > progression actor in `BETGame.hpp` (2026-06-02 dump, UE 5.7 MSVC shipping build).
 > This is the data that drives the per-class caps, curve-backed baselines,
-> supply scaling, and gate-disables in main.lua v2.19.5+.
+> supply scaling, and gate-disables in main.lua v2.19.6+.
 
 ---
 
@@ -18,14 +18,16 @@
 
 ---
 
-## Level 232 — sell-price multipliers (scale up for >6)
+## Level 232 — sell-price (scale ONLY `ScaledPricePercent` up for >6)
 
 | Class | Field | Type | Notes |
 |-------|-------|------|-------|
-| `Level232GameState` | `ScaledPricePercent` (float) | float | Global sell-price percentage. BET 0.14.6 patch notes confirm this is an earned-income percentage mechanic. |
-| `AALevel232CheckoutLane` | `LaneMultiplier` / `CouponMultiplier` | float | Per-lane sell-price multipliers; coupon applies when active on the lane. |
+| `Level232GameState` | `ScaledPricePercent` (float) | float | Global sell-price percentage. BET 0.14.6 patch notes confirm this is an earned-income percentage mechanic. **The single lever the mod scales.** |
+| `AALevel232CheckoutLane` | `LaneMultiplier` / `CouponMultiplier` | float | Per-lane sell-price multipliers; coupon applies when active. **Left at vanilla — see below.** |
 
-**Action:** for >6 possessed players, scale `ScaledPricePercent`, `LaneMultiplier`, and `CouponMultiplier` upward from first observed runtime values. This is a no-op at ≤6. `ItemSpawnRates` supply scaling remains active too. Live ≥7-player testing should still confirm the new 0.14.6 runtime values and whether `RequiredQuota` changed.
+**Action:** for >6 possessed players, scale ONLY `ScaledPricePercent` upward (linearly, `players/6`) from its first-observed runtime value. No-op at ≤6.
+
+**Why only one lever (v2.19.6):** the sell price multiplies `LaneMultiplier × CouponMultiplier × ScaledPricePercent`. v2.19.3–2.19.5 scaled all three by `players/6`, compounding income to `factor²`–`factor³` (4×–8× at 12 players with a coupon) — a large over-compensation versus ">6 = same difficulty as 6". `Level232ChunkManager.ItemSpawnRates` loot scaling was also removed: 0.14.6 now spawns Level 232 loot per-sector AND per-player, so scaling the count again double-counts. Live ≥7-player testing should confirm the 0.14.6 runtime values and whether `RequiredQuota` scales with player count (if it does, capping it would be the alternative to income scaling).
 
 ---
 
@@ -95,8 +97,9 @@ and hazard fields remain untouched unless live testing proves a separate need.
 - `NumberOfPuddles` — fixed hazard count; left unchanged.
 
 ### Level 232 (`Level232GameState` / `Level232ChunkManager`)
-- `ItemSpawnRates` — `FIntPoint` min/max ranges for item spawn counts. Fixed per-chunk supply ranges; **scaled up by `players / 6` for >6 players**.
-- `ScaledPricePercent`, `LaneMultiplier`, `CouponMultiplier` — sell-price multipliers; **scaled up by `players / 6` for >6 players** from first observed runtime values.
+- `ItemSpawnRates` — `FIntPoint` min/max ranges for item spawn counts. **No longer scaled (v2.19.6):** 0.14.6 spawns Level 232 loot per-sector AND per-player, so scaling the range too would double-count.
+- `ScaledPricePercent` — global earned-income %; **scaled up by `players / 6` for >6 players** from its first observed runtime value (the single income lever).
+- `LaneMultiplier`, `CouponMultiplier` — per-lane sell-price multipliers; **left at vanilla (v2.19.6):** scaling them on top of `ScaledPricePercent` compounded income.
 - `FacelingSpawnChunkInterval`, `FacelingMarkerTargetCountPerChunk` — fixed monster-spawn fields; left unchanged.
 
 ### Level 4 (`Level4GameState`)
@@ -116,7 +119,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 
 ---
 
-## Summary of all caps/scales applied by v2.19.5+ mod logic
+## Summary of all caps/scales applied by v2.19.6+ mod logic
 
 | What | Cap / scale value | Method |
 |------|-------------------|--------|
@@ -127,7 +130,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 | Generic player-scaled objectives (`FLevelObjective.ObjectiveAmount` where `bScalesWithPlayers=true`) | ≤10 until a per-objective baseline is measured | Array scan across all GameStates |
 | Numeric requirement fields (CoinGate, InteractableDoor, FUN ticket doors, etc.) | ≤10 until per-field live baselines are measured | Per-class property cap |
 | Level FUN warehouse coin requirements (`WarehouseRequiredCoinsTotals[]`) | ≤10 per element | Int-array scan + `AddWarehouseRequiredCoins` hook |
-| Level 232 sell-price multipliers (`ScaledPricePercent`, `LaneMultiplier`, `CouponMultiplier`) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base; no-op at ≤6 |
+| Level 232 income (`ScaledPricePercent` only) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base; no-op at ≤6. `LaneMultiplier`/`CouponMultiplier` left at vanilla (v2.19.6, anti-compounding) |
 | "All players present" gates (`bRequiresAllPlayers` on teleporters/level exits) | false when >6 possessed | Instance scan + `OnSurvivorOverlap`/`OnAllPlayersPresent`/teleporter hooks |
 | Level 6 puzzle difficulty (`ALevel6PuzzleManager.bScaleWithPlayers`) | `false` when >6 possessed (no-op at ≤6; v2.19.5 guard) | Instance scan with `effective_player_count() > ALL_PLAYERS_GATE_CAP` guard |
-| Confirmed supply fields (Level 1 almond water, Level 3 lootbox wire/tape counts, Level 232 item spawn ranges, Level 232 sell-price multipliers) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base to avoid repeated multiplication |
+| Confirmed integer supply counts (Level 1 almond water, Level 3 lootbox wire/tape counts) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base to avoid repeated multiplication. Float fields (RepairItemMultiplier, LootSpawnRatio) and Level 232 ItemSpawnRates removed v2.19.6 — see notes above |

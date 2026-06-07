@@ -269,8 +269,8 @@ Key methods:
 
 | Field | Type | Offset | Category | Our action |
 |-------|------|--------|----------|------------|
-| `ItemSpawnRates.PickupSpawnRange` | `FIntPoint` | 0x0B98 | **Supply** | ✅ Scale up by `players/6` |
-| `ItemSpawnRates.GrabbableSpawnRange` | `FIntPoint` | 0x0BA0 | **Supply** | ✅ Scale up by `players/6` |
+| `ItemSpawnRates.PickupSpawnRange` | `FIntPoint` | 0x0B98 | **Supply** | — (0.14.6 spawns loot per-player; mod scaling removed v2.19.6) |
+| `ItemSpawnRates.GrabbableSpawnRange` | `FIntPoint` | 0x0BA0 | **Supply** | — (0.14.6 spawns loot per-player; mod scaling removed v2.19.6) |
 | `FacelingSpawnChunkInterval` | `int32` | 0x0BA8 | Monster spawn | — |
 | `FacelingMarkerTargetCountPerChunk` | `int32` | 0x0BCC | Monster spawn | — |
 | `NumGroceryStoreRobots` | `int32` | 0x0C40 | Enemy count | — |
@@ -323,7 +323,7 @@ SellPrice = BasePrice
           × ScaledPricePercent     (GameState global — player-count-related?)
 ```
 
-**Key insight:** There are **multiple multipliers** in the chain. `ScaledPricePercent` is the global earned-percentage multiplier (confirmed by BET 0.14.6 patch notes), while `LaneMultiplier` and `CouponMultiplier` are per-lane links. v2.19.5 scales all three upward for >6 players from first observed runtime values.
+**Key insight:** There are **multiple multipliers** in the chain, MULTIPLIED together. `ScaledPricePercent` is the global earned-percentage multiplier (confirmed by BET 0.14.6 patch notes), while `LaneMultiplier` and `CouponMultiplier` are per-lane links. v2.19.3–2.19.5 scaled ALL THREE by `players/6`, which compounded the sell price by `factor²`–`factor³` (a 4×–8× over-compensation at 12 players with a coupon active). **v2.19.6 scales ONLY `ScaledPricePercent` (one lever, linear)** and leaves `LaneMultiplier` / `CouponMultiplier` at vanilla, to keep ">6 = same difficulty as 6 players".
 
 ---
 
@@ -479,7 +479,7 @@ No player-scaled fields identified.
 
 ---
 
-## Inventory of All Mod Actions (v2.19.5)
+## Inventory of All Mod Actions (v2.19.6)
 
 | Target | Action | Trigger |
 |--------|--------|---------|
@@ -496,10 +496,9 @@ No player-scaled fields identified.
 | `LevelFUNChunkManager.WarehouseRequiredCoinsTotals[]` | Cap each element at ≤10 | Int-array scan + hook |
 | `FLevelObjective.ObjectiveAmount` (where `bScalesWithPlayers=true`) | Cap at ≤10 | GameState array scan |
 | `bRequiresAllPlayers` on teleporters/exits | Force false when >6 players | Scan + hooks |
-| `Level232GameState.ScaledPricePercent` | Scale up by `players/6` when >6 (no-op at ≤6) | Startup + monitor + supply-scale hook |
-| `AALevel232CheckoutLane.LaneMultiplier` | Scale up by `players/6` when >6 (no-op at ≤6) | Startup + monitor + supply-scale hook |
-| `AALevel232CheckoutLane.CouponMultiplier` | Scale up by `players/6` when >6 (no-op at ≤6) | Startup + monitor + supply-scale hook |
-| `Level1ChunkManager.NumberOfAlmondWater` | Scale up by `players/6` | Supply scan |
-| `Level3ChunkManager` lootbox wire/tape counts | Scale up by `players/6` | Supply scan |
-| `Level232ChunkManager.ItemSpawnRates` ranges | Scale up by `players/6` | Supply scan |
+| `Level232GameState.ScaledPricePercent` | Scale up by `players/6` when >6 (no-op at ≤6); single income lever | Startup + monitor + supply-scale hook |
+| `Level1ChunkManager.NumberOfAlmondWater` | Scale up by `players/6` (int count) | Supply scan |
+| `Level3ChunkManager` lootbox wire/tape counts | Scale up by `players/6` (int counts) | Supply scan |
+
+> Removed in v2.19.6 (over-scaling / double-counting the game's own 0.14.6 per-player logic): `AALevel232CheckoutLane.LaneMultiplier` and `CouponMultiplier` scaling (compounded income), `Level232ChunkManager.ItemSpawnRates` scaling (loot is now per-player), `Level3ChunkManager.RepairItemMultiplier` scaling (game derives it via `PlayerCountToRepairItemMultiplier` curve), and `LevelNeg1ChunkManager.LootSpawnRatio` scaling (clamped float, was integer-rounded). The float fields were also wrongly passed through `ceil_int`.
 | Self pawn collision (Ctrl+N) | Toggle on/off | Keybind |

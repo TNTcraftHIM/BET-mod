@@ -4,7 +4,7 @@
 
 ## 支持的安装包
 
-当前公开发布的安装包：**BETPlayerCap v2.19.5 完整版 Windows 安装包**。
+当前公开发布的安装包：**BETPlayerCap v2.19.6 完整版 Windows 安装包**。
 
 完整版安装包已包含 UE4SS 运行时文件，因此普通用户**无需**单独安装
 UE4SS 或 Python。

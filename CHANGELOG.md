@@ -6,6 +6,42 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.6 (2026-06-07)
+
+Found by a full adversarial code+docs+design audit (6 review dimensions, per-finding
+3-skeptic verification). Theme: after BET 0.14.6 the game does more per-player scaling
+itself, so the mod's blanket `×players/6` was over-reaching and compounding in several
+places. This release rebalances toward the design philosophy (">6 = same difficulty as 6").
+
+- **Fix (high): spawn-fix settling state leaked to globals.** `last_median_z` /
+  `settled_reads` were declared *after* `reset_per_level_state()`, so that function's
+  `= nil` / `= 0` bound to GLOBALS while the spawn fix read the file-scope locals — the
+  two-read settling gate never actually reset across a level/world transition (risking an
+  outlier teleport during the elevator-descent cutscene on a re-detect). Moved the
+  declarations above the reset so they bind as upvalues. Also removed the dead
+  `TP_XY_SPREAD` constant.
+- **Balance (high): Level 232 income no longer compounds.** The sell price multiplies
+  `LaneMultiplier × CouponMultiplier × ScaledPricePercent`. v2.19.3–2.19.5 scaled all
+  three by `players/6`, compounding to `factor²`–`factor³` (a 4×–8× over-compensation at
+  12 players with a coupon). v2.19.6 scales **only** `ScaledPricePercent` (one lever,
+  linear) and leaves the per-lane multipliers at vanilla.
+- **Balance (high): removed double-counting / wrongly-rounded supply scaling.**
+  - `Level232ChunkManager.ItemSpawnRates` scaling removed — 0.14.6 spawns Level 232 loot
+    per-sector *and per-player*, so scaling the count again double-counts.
+  - `Level3ChunkManager.RepairItemMultiplier` scaling removed — the game already derives
+    it per player via the `PlayerCountToRepairItemMultiplier` curve; scaling it fought the
+    game's own curve. (It is also a `float`, which the integer `ceil_int` path mis-rounded.)
+  - `LevelNeg1ChunkManager.LootSpawnRatio` scaling removed — a clamped `float` that was
+    being integer-rounded (0.5 → 1.0); loot density is left to the game.
+  - Integer supply *counts* (Level 1 almond water, Level 3 lootbox wire/tape) are still
+    scaled by `players/6` — `ceil_int` is correct for counts. The now-unused
+    `scale_fintpoint_range` / `scale_level232_item_spawn_rates` helpers were removed.
+- **Docs:** rewrote `known_issues.md` to add the v2.19.5 section and correct the v2.19.4
+  root-cause (the "stale base under-scales" theory was wrong); updated
+  `game_mechanics_reference.md` and `full_player_scaling_audit.md` to reflect the
+  single-lever income model and the removed supply scaling. These changes still want a
+  live ≥7-player 0.14.6 confirmation (logged via the existing S232 diagnostics).
+
 ## v2.19.5 (2026-06-07)
 
 - **Fix (audit follow-up): supply scaling could compound on a re-detect.** v2.19.4's

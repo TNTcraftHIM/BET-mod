@@ -23,7 +23,7 @@ local ALL_PLAYERS_GATE_CAP = 6
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
 -- ======================================================================
-local VERSION = "2.19.5-supply-base-fix"
+local VERSION = "2.19.6-economy-rebalance"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -405,9 +405,10 @@ local ALL_PLAYERS_GATE_PROPS = {
     bRequiresAllPlayers = false,  -- cap_requirement_prop sets bools to target when true
 }
 
--- == Level 232: scale the player-scaled sell-price metrics UP for >6 players ==
--- (no-op at <=6). Improves the global ScaledPricePercent on the GameState here;
--- the per-lane LaneMultiplier / CouponMultiplier are scaled in cap_s232_price.
+-- == Level 232: scale the global player-scaled sell-price percentage UP for >6 players ==
+-- (no-op at <=6). cap_s232_price scales ONLY GameState.ScaledPricePercent (linear, one
+-- lever). Per-lane LaneMultiplier / CouponMultiplier are left at vanilla — scaling all
+-- three multiplicative levers compounded income to factor^2..factor^3 (removed v2.19.6).
 local S232_PRICE_CLASSES = {
     "Level232GameState",
 }
@@ -453,18 +454,26 @@ local INT_ARRAY_CAP_PROPS = {
 local SUPPLY_SCALE_CLASSES = {
     "Level1ChunkManager",            -- NumberOfAlmondWater
     "Level1ChunkManagerDebug",
-    "Level3ChunkManager",            -- repair supplies / lootbox contents
-    "Level232ChunkManager",          -- ItemSpawnRates FIntPoint ranges (handled specially)
-    "LevelNeg1ChunkManager",         -- LootSpawnRatio (loot density)
+    "Level3ChunkManager",            -- lootbox wire/tape spawn COUNTS (flat int config)
+    -- v2.19.6: Level232ChunkManager removed — 0.14.6 spawns Level 232 loot per-sector
+    -- AND per-player, so scaling ItemSpawnRates by players/6 double-counts. LevelNeg1-
+    -- ChunkManager removed too: its only scaled field (LootSpawnRatio) is a clamped
+    -- float that was being integer-rounded; loot density is left to the game.
 }
+-- Only INTEGER count fields are scaled here (scale_supply_number uses ceil_int, which is
+-- correct for counts, wrong for floats). FLOAT multiplier/ratio fields are intentionally
+-- NOT scaled:
+--   * RepairItemMultiplier (float) — the game already derives it per player via
+--     ALevel3ChunkManager.PlayerCountToRepairItemMultiplier (a UCurveFloat); scaling it
+--     too would double-count and fight the game's own curve.
+--   * LootSpawnRatio (float) — clamped by LootSpawnRatioMin/Max; integer-rounding it was
+--     wrong, and loot density is left to the game.
 local SUPPLY_SCALE_PROPS = {
     NumberOfAlmondWater = true,
     SingleFuseLootboxWireSpawnCount = true,
     SingleFuseLootboxTapeSpawnCount = true,
     MultiFuseLootboxWireSpawnCount = true,
     MultiFuseLootboxTapeSpawnCount = true,
-    RepairItemMultiplier = true,       -- Level 3: multiplier for repair item spawns (supply)
-    LootSpawnRatio = true,            -- Level Neg1: loot density ratio (supply)
 }
 
 -- Curve-backed requirement fields where the authored curve can tell us the 6-player cap.
@@ -622,46 +631,6 @@ local function scale_supply_number(obj, prop, factor, reason)
     return false
 end
 
-local function scale_fintpoint_range(owner, rangeProp, factor, reason, key_owner, key_prefix)
-    local r = safe("SupplyRangeRead_" .. rangeProp, function() return owner[rangeProp] end)
-    if not r then return false end
-    local x = safe("SupplyRangeX_" .. rangeProp, function() return r.X or r.x end)
-    local y = safe("SupplyRangeY_" .. rangeProp, function() return r.Y or r.y end)
-    if type(x) ~= "number" or type(y) ~= "number" then return false end
-    key_owner = key_owner or owner
-    key_prefix = key_prefix or rangeProp
-    local keyx = supply_original_key(key_owner, key_prefix .. ".X")
-    local keyy = supply_original_key(key_owner, key_prefix .. ".Y")
-    local basex = supply_scaled_original[keyx] or x
-    local basey = supply_scaled_original[keyy] or y
-    supply_scaled_original[keyx] = basex
-    supply_scaled_original[keyy] = basey
-    local tx = ceil_int(basex * factor)
-    local ty = ceil_int(basey * factor)
-    if tx <= x and ty <= y then return false end
-    local ok = safe("SupplyRangeWrite_" .. rangeProp, function()
-        if r.X ~= nil then r.X = tx else r.x = tx end
-        if r.Y ~= nil then r.Y = ty else r.y = ty end
-        return true
-    end)
-    if ok then
-        log(string.format("[SUPPLY] %s.%s (%s,%s) -> (%d,%d) (factor=%.2f %s)",
-            reason or "supply", key_prefix, tostring(x), tostring(y), tx, ty, factor, object_label(key_owner)))
-        safe("supply_range_fnu", function() key_owner:ForceNetUpdate() return true end)
-        return true
-    end
-    return false
-end
-
-local function scale_level232_item_spawn_rates(obj, factor, reason)
-    local rates = safe("Supply232Rates", function() return obj.ItemSpawnRates end)
-    if not rates then return 0 end
-    local changed = 0
-    if scale_fintpoint_range(rates, "PickupSpawnRange", factor, reason or "Level232ItemSpawnRates", obj, "ItemSpawnRates.PickupSpawnRange") then changed = changed + 1 end
-    if scale_fintpoint_range(rates, "GrabbableSpawnRange", factor, reason or "Level232ItemSpawnRates", obj, "ItemSpawnRates.GrabbableSpawnRange") then changed = changed + 1 end
-    return changed
-end
-
 local function scale_supply_for_more_players(reason)
     if not ENABLE_SUPPLY_SCALING or not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
     local players = effective_player_count()
@@ -673,12 +642,8 @@ local function scale_supply_for_more_players(reason)
         if list then
             for _, obj in pairs(list) do
                 if is_real_instance(obj) then
-                    if class_name == "Level232ChunkManager" then
-                        total = total + scale_level232_item_spawn_rates(obj, factor, reason or class_name)
-                    else
-                        for prop, _ in pairs(SUPPLY_SCALE_PROPS) do
-                            if scale_supply_number(obj, prop, factor, reason or class_name) then total = total + 1 end
-                        end
+                    for prop, _ in pairs(SUPPLY_SCALE_PROPS) do
+                        if scale_supply_number(obj, prop, factor, reason or class_name) then total = total + 1 end
                     end
                 end
             end
@@ -831,10 +796,16 @@ local function cap_all_players_gates(reason)
     return total
 end
 
--- Level 232: improve the sell-price chain for >6 players. BET 0.14.6's own
--- patch notes confirm price scaling is an earned-percentage mechanic, so for
--- larger groups we scale the global ScaledPricePercent plus per-lane multipliers
--- upward from first observed runtime values. This remains a no-op at <=6.
+-- Level 232: improve the sell-price chain for >6 players. BET 0.14.6's own patch
+-- notes confirm price scaling is an earned-percentage mechanic, so for larger groups
+-- we scale ONLY the global ScaledPricePercent upward from its first observed runtime
+-- value, linearly by players/6. This remains a no-op at <=6.
+--
+-- v2.19.6: scale a SINGLE lever, not three. The sell price multiplies
+-- LaneMultiplier x CouponMultiplier x ScaledPricePercent, so scaling all three by
+-- players/6 (as v2.19.3-2.19.5 did) compounded to factor^2..factor^3 income — a
+-- 4x-8x over-compensation at 12 players that violated "same difficulty as 6 players".
+-- LaneMultiplier / CouponMultiplier are now left at their vanilla per-lane values.
 local s232_price_logged = false
 local function cap_s232_price(reason)
     if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
@@ -877,46 +848,6 @@ local function cap_s232_price(reason)
         end
     end
     if not s232_live then return 0 end
-    -- Scale up checkout-lane multipliers for >6 players.
-    -- Higher multipliers = better sell prices = easier to meet quota.
-    if players > SUPPLY_BASE_PLAYERS then
-        local lanes = safe("S232Lanes", function() return FindAllOf("AALevel232CheckoutLane") end)
-        if lanes then
-            for _, lane in pairs(lanes) do
-                if is_real_instance(lane) then
-                    local cm = safe("S232Coupon", function() return lane.CouponMultiplier end)
-                    if type(cm) == "number" and cm > 0 then
-                        local key = supply_original_key(lane, "CouponMultiplier")
-                        local base = supply_scaled_original[key] or cm
-                        supply_scaled_original[key] = base
-                        local target = ceil_int(base * factor * 100) / 100
-                        if target > cm then
-                            if safe("S232CouponW", function() lane.CouponMultiplier = target return true end) then
-                                total = total + 1
-                                log(string.format("[S232] CheckoutLane.CouponMultiplier %.2f -> %.2f (base=%.2f factor=%.2f %s)",
-                                    cm, target, base, factor, object_label(lane)))
-                            end
-                        end
-                    end
-                    -- Also scale LaneMultiplier (per-lane base price multiplier)
-                    local lm = safe("S232Lane", function() return lane.LaneMultiplier end)
-                    if type(lm) == "number" and lm > 0 then
-                        local key = supply_original_key(lane, "LaneMultiplier")
-                        local base = supply_scaled_original[key] or lm
-                        supply_scaled_original[key] = base
-                        local target = ceil_int(base * factor * 100) / 100
-                        if target > lm then
-                            if safe("S232LaneW", function() lane.LaneMultiplier = target return true end) then
-                                total = total + 1
-                                log(string.format("[S232] CheckoutLane.LaneMultiplier %.2f -> %.2f (base=%.2f factor=%.2f %s)",
-                                    lm, target, base, factor, object_label(lane)))
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
     return total
 end
 
@@ -1206,6 +1137,15 @@ local spawn_fix_applied = false
 local level_detected = false
 local level_detect_time = 0
 local diag_tick = 0
+-- Cluster-settling state for the spawn fix. MUST be declared HERE, before
+-- reset_per_level_state() below, so that function's `last_median_z = nil` /
+-- `settled_reads = 0` bind to these file-scope upvalues. If they were declared
+-- only after the function (as they used to be), those assignments would leak to
+-- GLOBALS while try_spawn_fix kept reading the locals — so the settling gate
+-- never reset across a level/world transition. try_spawn_fix is defined far
+-- below and captures these same upvalues.
+local last_median_z = nil
+local settled_reads = 0
 
 -- Live world identity, used to detect GAME-DRIVEN level transitions (the in-game
 -- elevator, a lobby return, or a fresh run from a cleared save) — not just the
@@ -1256,12 +1196,11 @@ end
 -- PlayerStart coords (~+8500 offset), so absolute-Z thresholds are useless.
 local CLUSTER_GAP   = 2500   -- |Z-median| beyond this = outlier (jitter ~100s; floor gap ~8000)
 local SETTLE_TOL    = 300    -- median Z must move < this between reads to count as "settled"
-local TP_XY_SPREAD  = 120    -- per-outlier XY offset so teleported players don't stack
 local MIN_CLUSTER   = 2      -- majority must have at least this many to be trusted
 local FIX_MAX_TICKS = 8      -- only attempt fix within this many ticks of level detect
                              -- (after that, a far player likely WENT to Neg1 legitimately)
-local last_median_z = nil
-local settled_reads = 0
+-- (last_median_z / settled_reads are declared above, before reset_per_level_state,
+--  so the reset binds to them as upvalues instead of creating stray globals.)
 
 -- v2.14 host noclip-nudge: step size per Ctrl+Arrow / Ctrl+PageUp-Down keypress.
 -- teleport_pawn snaps with bSweep=false,bTeleport=true (no collision sweep), so a
