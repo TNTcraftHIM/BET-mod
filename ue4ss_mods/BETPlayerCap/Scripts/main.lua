@@ -23,7 +23,7 @@ local ALL_PLAYERS_GATE_CAP = 6
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
 -- ======================================================================
-local VERSION = "2.19.7-cleanup"
+local VERSION = "2.19.8-overcap-fix"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -418,31 +418,21 @@ local GENERATOR_CAP_PROPS = {
     NumberOfGenerators = GENERATOR_CAP,
 }
 
--- == Per-class numeric caps for player-scaled objective requirements ==
-local NUMERIC_CAP_CLASSES = {
-    "RepairableElectricalBox",     -- RequiredFuseAmount (no player-count curve exposed)
-    "CoinGate",                    -- CoinsRequired
-    "InteractableDoor",            -- ItemAmountRequired
-    "LevelFunExitDoor",            -- RequiredTicketMilestone
-    "LevelFunExitPinger",          -- ItemAmountRequired
-    "PartyCelebrationSpeaker",     -- RequiredTicketMilestone
-}
-local NUMERIC_CAP_PROPS = {
-    RequiredFuseAmount = GENERIC_OBJECTIVE_CAP,
-    CoinsRequired = GENERIC_OBJECTIVE_CAP,
-    ItemAmountRequired = GENERIC_OBJECTIVE_CAP,
-    RequiredTicketMilestone = GENERIC_OBJECTIVE_CAP,
-}
-
--- == Per-class requirement arrays ==
--- These are requirements, not supply spawns. Cap them down. Do not cap item/loot
--- spawn arrays such as Level232 ItemSpawnRates or Level3 wire repair-item spawns.
-local INT_ARRAY_CAP_CLASSES = {
-    "LevelFUNChunkManager",         -- WarehouseRequiredCoinsTotals
-}
-local INT_ARRAY_CAP_PROPS = {
-    WarehouseRequiredCoinsTotals = GENERIC_OBJECTIVE_CAP,
-}
+-- == REMOVED in v2.19.8: the "numeric requirement" + "int-array requirement" caps ==
+-- These capped RequiredFuseAmount / CoinsRequired / ItemAmountRequired /
+-- RequiredTicketMilestone / WarehouseRequiredCoinsTotals to GENERIC_OBJECTIVE_CAP,
+-- ASSUMING they scale up with player count. A live ≥7-player 0.14.6 session proved
+-- otherwise — they are FIXED or PROCEDURAL level-design goals, not player-scaled:
+--   * RequiredTicketMilestone = fixed 1500 (cap -> 10 trivialized Level FUN's exit/celebration);
+--   * WarehouseRequiredCoinsTotals = per-generation procedural (164/138/227 vs 124/150/155
+--     at the SAME 9 players) (cap -> 10 trivialized the warehouses);
+--   * RequiredFuseAmount = fixed/seeded 9 at 7, 8 AND 9 players (and the FuseBoard curve
+--     cap mis-read GetFloatValue(6) ≈ 1, slashing 9 -> 1).
+-- None has a PlayerCount* curve / *PerPlayer field, and these caps had NO ≤6 guard, so
+-- they deviated from the 6-player baseline at every count. Because the authored value is
+-- identical at 6 and >6 players, NOT capping keeps ">6 = same difficulty as 6" and cannot
+-- make >6 harder. Genuinely player-scaled requirements remain capped via the
+-- bScalesWithPlayers objective array, the elevator presence gate, and the generator cap.
 
 -- == Confirmed supply/resource fields ==
 -- These are not objective requirements. For >6 players, scale them UP from their
@@ -473,18 +463,8 @@ local SUPPLY_SCALE_PROPS = {
     MultiFuseLootboxTapeSpawnCount = true,
 }
 
--- Curve-backed requirement fields where the authored curve can tell us the 6-player cap.
-local CURVE_REQUIREMENT_CLASSES = {
-    "FuseBoard",
-}
-
-local CURVE_REQUIREMENT_SPECS = {
-    {
-        amountProp = "RequiredFuseAmount",
-        curveProp = "PlayerCountFuseCurve",
-        fallbackCap = GENERIC_OBJECTIVE_CAP,
-    },
-}
+-- (Removed v2.19.8: the FuseBoard PlayerCountFuseCurve cap — see the removal note above.
+--  GetFloatValue(6) returned ~1, slashing a fixed/seeded 9-fuse board to 1 fuse.)
 
 -- == GameState-scoped generic "bScalesWithPlayers" objective array ==
 local GENERIC_OBJECTIVE_CLASSES = {
@@ -561,45 +541,6 @@ end
 
 local function ceil_int(v)
     return math.floor(v + 0.999999)
-end
-
-local function curve_value_at(curve, x, label)
-    if not curve then return nil end
-    return safe("CurveGet_" .. tostring(label), function()
-        if curve.GetFloatValue then return curve:GetFloatValue(x) end
-        return nil
-    end)
-end
-
-local function cap_curve_requirement_object(obj, spec, label)
-    if not ENABLE_OBJECTIVE_CAP or not obj or not is_real_instance(obj) then return false end
-    local old = safe("CurveReqAmount_" .. spec.amountProp, function() return obj[spec.amountProp] end)
-    if type(old) ~= "number" then return false end
-    local curve = safe("CurveReqCurve_" .. spec.curveProp, function() return obj[spec.curveProp] end)
-    local cap = curve_value_at(curve, ALL_PLAYERS_GATE_CAP, spec.curveProp) or spec.fallbackCap or GENERIC_OBJECTIVE_CAP
-    if type(cap) ~= "number" then cap = spec.fallbackCap or GENERIC_OBJECTIVE_CAP end
-    cap = ceil_int(cap)
-    if cap < 1 then cap = 1 end
-    if old <= cap then return false end
-    return cap_requirement_prop(obj, spec.amountProp, cap, label or "curve")
-end
-
-local function cap_curve_requirements(reason)
-    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
-    local total = 0
-    for _, class_name in ipairs(CURVE_REQUIREMENT_CLASSES) do
-        local list = safe("CurveReqFind_" .. class_name, function() return FindAllOf(class_name) end)
-        if list then
-            for _, obj in pairs(list) do
-                if is_real_instance(obj) then
-                    for _, spec in ipairs(CURVE_REQUIREMENT_SPECS) do
-                        if cap_curve_requirement_object(obj, spec, reason or class_name) then total = total + 1 end
-                    end
-                end
-            end
-        end
-    end
-    return total
 end
 
 local function supply_original_key(obj, prop)
@@ -685,85 +626,6 @@ end
 
 local function cap_generator_requirements(reason)
     return cap_props_on_classes(GENERATOR_CAP_CLASSES, GENERATOR_CAP_PROPS, reason)
-end
-
-local function cap_numeric_requirements(reason)
-    return cap_props_on_classes(NUMERIC_CAP_CLASSES, NUMERIC_CAP_PROPS, reason)
-end
-
-local function read_array_num(arr)
-    return safe("ArrayNum", function()
-        if arr.GetArrayNum then return arr:GetArrayNum() end
-        return #arr
-    end) or 0
-end
-
-local function cap_int_array_prop(owner, prop, cap, reason)
-    if not ENABLE_OBJECTIVE_CAP or not owner or not is_real_instance(owner) then return 0 end
-    cap = cap or GENERIC_OBJECTIVE_CAP
-    local arr = safe("IntArrayRead_" .. prop, function() return owner[prop] end)
-    if not arr then return 0 end
-    local n = read_array_num(arr)
-    if n <= 0 then return 0 end
-    local changed = 0
-    local label = reason or prop
-
-    local function cap_entry(idx, value)
-        local v = unwrap_param(value)
-        if type(v) ~= "number" then return end
-        if v <= cap then return end
-        local ok = safe("IntArrayWrite_" .. prop, function() arr[idx] = cap return true end)
-        if not ok then return end
-        local now = safe("IntArrayVerify_" .. prop, function()
-            local reread = owner[prop]
-            local rv = reread and reread[idx]
-            rv = unwrap_param(rv)
-            return rv
-        end)
-        if type(now) == "number" and now <= cap then
-            changed = changed + 1
-            log(string.format("[OBJCAP] %s.%s[%s] %s -> %d (%s)",
-                label, prop, tostring(idx), tostring(v), cap, object_label(owner)))
-        else
-            log(string.format("[OBJCAP] %s.%s[%s] write did not stick (old=%s actual=%s cap=%d)",
-                label, prop, tostring(idx), tostring(v), tostring(now), cap))
-        end
-    end
-
-    local iter_ok = safe("IntArrayEach_" .. prop, function()
-        if arr.ForEach then
-            arr:ForEach(function(Index, Elem) cap_entry(Index, Elem) end)
-            return true
-        end
-        return false
-    end)
-    if not iter_ok then
-        for i = 1, n do
-            safe("IntArrayIdx_" .. prop, function() cap_entry(i, arr[i]) return true end)
-        end
-    end
-    if changed > 0 then
-        safe("intarray_fnu", function() owner:ForceNetUpdate() return true end)
-    end
-    return changed
-end
-
-local function cap_int_array_requirements(reason)
-    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
-    local total = 0
-    for _, class_name in ipairs(INT_ARRAY_CAP_CLASSES) do
-        local list = safe("IntArrayFind_" .. class_name, function() return FindAllOf(class_name) end)
-        if list then
-            for _, obj in pairs(list) do
-                if is_real_instance(obj) then
-                    for prop, cap in pairs(INT_ARRAY_CAP_PROPS) do
-                        total = total + cap_int_array_prop(obj, prop, cap, reason or class_name)
-                    end
-                end
-            end
-        end
-    end
-    return total
 end
 
 -- Force bRequiresAllPlayers=false on teleporters and level exits when there are
@@ -989,20 +851,6 @@ local function register_generic_objective_hook(path)
     end)
 end
 
-local function register_int_array_cap_hook(path, prop)
-    register_self_obj_hook(path, "ObjCapHook_", function(obj)
-        cap_int_array_prop(obj, prop, GENERIC_OBJECTIVE_CAP, path)
-    end)
-end
-
-local function register_curve_requirement_hook(path)
-    register_self_obj_hook(path, "CurveReqHook_", function(obj)
-        for _, spec in ipairs(CURVE_REQUIREMENT_SPECS) do
-            cap_curve_requirement_object(obj, spec, path)
-        end
-    end)
-end
-
 local function register_supply_scale_hook(path)
     local ok = safe("SupplyHook_" .. path, function()
         RegisterHook(path, function(self, ...)
@@ -1062,11 +910,8 @@ local function ensure_objective_cap_hooks()
     register_cap_hook("/Script/BETGame.BETChunkManagerBase:GenerateChunks", GENERATOR_CAP_PROPS)
     register_supply_scale_hook("/Script/BETGame.BETChunkManagerBase:GenerateChunks")
     register_generic_objective_hook("/Script/BETGame.MultiplayerGameState:OnRep_CurrentObjectives")
-    -- The following hooks re-assert caps at points where the game re-initializes
-    -- or re-evaluates these values during gameplay (not just at level start).
-    register_curve_requirement_hook("/Script/BETGame.FuseBoard:OnFuseBoardInitialized")
+    -- Re-assert the generic objective cap when the game re-evaluates quota mid-level.
     register_generic_objective_hook("/Script/BETGame.Level232GameState:OnRep_CurrentQuota")
-    register_int_array_cap_hook("/Script/BETGame.LevelFUNChunkManager:AddWarehouseRequiredCoins", "WarehouseRequiredCoinsTotals")
     register_all_players_gate_hook("/Script/BETGame.LevelExitBase:OnSurvivorOverlap")
     register_all_players_gate_hook("/Script/BETGame.LevelExitBase:OnAllPlayersPresent")
     register_all_players_gate_hook("/Script/BETGame.InteractableTeleporter:OnActivationStateChange")
@@ -1077,10 +922,7 @@ ExecuteInGameThread(function()
     pcall(ensure_objective_cap_hooks)
     pcall(cap_known_objective_requirements, "startup")
     pcall(cap_generator_requirements, "startup")
-    pcall(cap_curve_requirements, "startup")
     pcall(cap_level6_puzzle_scale, "startup")
-    pcall(cap_numeric_requirements, "startup")
-    pcall(cap_int_array_requirements, "startup")
     pcall(scale_supply_for_more_players, "startup")
     pcall(cap_all_players_gates, "startup")
     pcall(cap_s232_price, "startup")
@@ -2088,10 +1930,7 @@ local function run_monitor()
             ensure_objective_cap_hooks()
             cap_known_objective_requirements("level-detect")
             cap_generator_requirements("level-detect")
-            cap_curve_requirements("level-detect")
             cap_level6_puzzle_scale("level-detect")
-            cap_numeric_requirements("level-detect")
-            cap_int_array_requirements("level-detect")
             scale_supply_for_more_players("level-detect")
             cap_all_players_gates("level-detect")
             cap_s232_price("level-detect")
@@ -2149,10 +1988,7 @@ local function run_monitor()
     if ENABLE_OBJECTIVE_CAP then
         cap_known_objective_requirements("monitor")
         cap_generator_requirements("monitor")
-        cap_curve_requirements("monitor")
         cap_level6_puzzle_scale("monitor")
-        cap_numeric_requirements("monitor")
-        cap_int_array_requirements("monitor")
         scale_supply_for_more_players("monitor")
         cap_all_players_gates("monitor")
         cap_s232_price("monitor")

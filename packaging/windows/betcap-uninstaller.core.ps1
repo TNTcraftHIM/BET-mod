@@ -32,7 +32,7 @@ function Select-GameRootDialog() {
     return ""
 }
 
-Write-Host 'BETPlayerCap v2.19.7 full package uninstaller'
+Write-Host 'BETPlayerCap v2.19.8 full package uninstaller'
 
 # Prefer a folder that actually has our backup manifest; else any valid game root.
 if (-not (Test-Backup $GameRoot)) {

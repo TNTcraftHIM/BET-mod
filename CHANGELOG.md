@@ -6,6 +6,36 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.8 (2026-06-13)
+
+Driven by a real ≥7-player (up to 9) BET 0.14.6 live session (v2.19.7), then
+confirmed by a per-field investigation (log + dump) with adversarial verification.
+
+- **Fix: stop over-capping FIXED / PROCEDURAL level goals (it was trivializing levels).**
+  The live log proved the "numeric requirement" / "int-array requirement" / curve caps
+  were hitting values that do NOT scale with player count, so capping them to 10 (or the
+  curve's misread ~1) made levels far EASIER than a 6-player game — the inverse of the
+  "≥7 = same as 6" rule. Removed these caps entirely:
+  - `RequiredTicketMilestone` (Level FUN exit door + celebration speakers) — was a fixed
+    **1500** capped to 10 (a ~150× trivialization of the FUN ticket goal).
+  - `WarehouseRequiredCoinsTotals[]` (Level FUN) — per-generation **procedural** (164/138/227
+    vs 124/150/155 at the same 9 players) capped to 10.
+  - `FuseBoard.RequiredFuseAmount` — fixed/seeded **9** at 7/8/9 players; the
+    `PlayerCountFuseCurve:GetFloatValue(6)` cap basis returned ~1 and slashed it 9 → 1.
+  - `RepairableElectricalBox.RequiredFuseAmount`, `CoinGate.CoinsRequired`,
+    `InteractableDoor`/`LevelFunExitPinger.ItemAmountRequired` — no player-count mechanism
+    on any of their classes (dump-confirmed), i.e. fixed/procedural; capping was unjustified.
+  None of these scale up with players, so removing the caps keeps ≥7-player difficulty
+  identical to 6 players (and can never make it harder). Supply on those levels is still
+  scaled UP independently, so the fixed requirements are met with proportionally more parts.
+  Removed the now-unused `NUMERIC_CAP_*` / `INT_ARRAY_CAP_*` / `CURVE_REQUIREMENT_*` tables
+  and their `cap_numeric_requirements` / `cap_int_array_*` / `cap_curve_*` functions and
+  hook registrations (−164 lines in main.lua).
+- **Preserved (genuinely player-scaled, live-verified):** `PlayersNeededToStartElevator`
+  → 6 (tracked count 1:1), `FLevelObjective.ObjectiveAmount` where `bScalesWithPlayers`
+  → 10 (the game's own flag; observed amount = players + 4), the all-players gates, the
+  Level 6 puzzle, the generator safety cap, and all supply scale-ups.
+
 ## v2.19.7 (2026-06-07)
 
 Code-quality pass (a full simplify/optimize/check audit with adversarial

@@ -134,8 +134,8 @@ No player-scaled fields identified in dump.
 
 | Field | Type | Offset | Category | Our action |
 |-------|------|--------|----------|------------|
-| `PlayerCountFuseCurve` | `UCurveFloat*` | varies | **Requirement curve** | ✅ Read `GetFloatValue(6)` for cap |
-| `RequiredFuseAmount` | `int32` | varies | **Requirement** | ✅ Cap to curve value (fallback 10) |
+| `PlayerCountFuseCurve` | `UCurveFloat*` | varies | Lerp alpha between `RequiredFusesMin`/`Max` | — (NOT a fuse count; `GetFloatValue(6)`≈1) |
+| `RequiredFuseAmount` | `int32` | varies | Fixed/seeded (9 at 7-9p in live log) | — (cap removed v2.19.8 — see below) |
 
 ### `ALevel3GameState` : `AMultiplayerGameState`
 No extra fields.
@@ -340,7 +340,7 @@ SellPrice = BasePrice
 
 | Field | Type | Offset | Category | Our action |
 |-------|------|--------|----------|------------|
-| `WarehouseRequiredCoinsTotals` | `TArray<int32>` | 0x0750 | **Requirement** | ✅ Cap per element at 10 |
+| `WarehouseRequiredCoinsTotals` | `TArray<int32>` | 0x0750 | **Procedural** (varies per generation) | — (cap removed v2.19.8; not player-scaled) |
 | `LockedDoorSpawnChance` | `float` | 0x0780 | Door config | — |
 | `DoorCostRange` | `FIntPoint` | 0x0784 | Door cost range | — |
 | `NumLanes` | `int32` | 0x0818 | Layout | — |
@@ -479,22 +479,14 @@ No player-scaled fields identified.
 
 ---
 
-## Inventory of All Mod Actions (v2.19.7)
+## Inventory of All Mod Actions (v2.19.8)
 
 | Target | Action | Trigger |
 |--------|--------|---------|
 | Lobby widget | Cap to 16 players | Widget hook |
-| `AElevator_Base.PlayersNeededToStartElevator` | Cap at ≤6 | Scan + hooks |
-| `Level1ChunkManager.NumberOfGenerators` | Cap at ≤10 | Scan + hooks |
-| `FuseBoard.RequiredFuseAmount` | Cap at `GetFloatValue(6)` from `PlayerCountFuseCurve` | Curve read + hooks |
-| `RepairableElectricalBox.RequiredFuseAmount` | Cap at ≤10 | Scan + hooks |
-| `CoinGate.CoinsRequired` | Cap at ≤10 | Scan + hooks |
-| `InteractableDoor.ItemAmountRequired` | Cap at ≤10 | Scan + hooks |
-| `LevelFunExitDoor.RequiredTicketMilestone` | Cap at ≤10 | Scan + hooks |
-| `LevelFunExitPinger.ItemAmountRequired` | Cap at ≤10 | Scan + hooks |
-| `PartyCelebrationSpeaker.RequiredTicketMilestone` | Cap at ≤10 | Scan + hooks |
-| `LevelFUNChunkManager.WarehouseRequiredCoinsTotals[]` | Cap each element at ≤10 | Int-array scan + hook |
-| `FLevelObjective.ObjectiveAmount` (where `bScalesWithPlayers=true`) | Cap at ≤10 | GameState array scan |
+| `AElevator_Base.PlayersNeededToStartElevator` | Cap at ≤6 (tracks player count 1:1) | Scan + hooks |
+| `Level1ChunkManager.NumberOfGenerators` | Cap at ≤10 (safety net; not yet confirmed player-scaled) | Scan + hooks |
+| `FLevelObjective.ObjectiveAmount` (where `bScalesWithPlayers=true`) | Cap at ≤10 (game's own scaling flag) | GameState array scan |
 | `bRequiresAllPlayers` on teleporters/exits | Force false when >6 players | Scan + hooks |
 | `Level232GameState.ScaledPricePercent` | Scale up by `players/6` when >6 (no-op at ≤6); single income lever | Startup + monitor + supply-scale hook |
 | `Level1ChunkManager.NumberOfAlmondWater` | Scale up by `players/6` (int count) | Supply scan |
@@ -504,3 +496,5 @@ No player-scaled fields identified.
 > This table lists the cap/scale actions only. The host keybinds (Ctrl+G/J/K/L/O/P, Ctrl+Arrows, Ctrl+PageUp/Down) are tools, not cap/scale actions — see the README keybind table for the full list.
 
 > Removed in v2.19.6 (over-scaling / double-counting the game's own 0.14.6 per-player logic): `AALevel232CheckoutLane.LaneMultiplier` and `CouponMultiplier` scaling (compounded income), `Level232ChunkManager.ItemSpawnRates` scaling (loot is now per-player), `Level3ChunkManager.RepairItemMultiplier` scaling (game derives it via `PlayerCountToRepairItemMultiplier` curve), and `LevelNeg1ChunkManager.LootSpawnRatio` scaling (clamped float, was integer-rounded). The float fields were also wrongly passed through `ceil_int`.
+
+> Removed in v2.19.8 (live ≥7-player log proved these are FIXED/PROCEDURAL level goals, not player-scaled — capping them trivialized levels): `FuseBoard.RequiredFuseAmount` (curve cap mis-read `GetFloatValue(6)`≈1, slashing a fixed 9 → 1), `RepairableElectricalBox.RequiredFuseAmount`, `CoinGate.CoinsRequired`, `InteractableDoor` / `LevelFunExitPinger.ItemAmountRequired`, `LevelFunExitDoor` / `PartyCelebrationSpeaker.RequiredTicketMilestone` (fixed 1500), and `LevelFUNChunkManager.WarehouseRequiredCoinsTotals[]` (per-generation procedural). None scale up with player count, so not capping keeps >6 the same as 6.

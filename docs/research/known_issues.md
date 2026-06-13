@@ -1,5 +1,29 @@
 # Known follow-up issues
 
+## Over-capping fixed/procedural level goals trivialized Level FUN & Level 3 — FIXED in v2.19.8
+
+Found from a real ≥7-player (up to 9) BET 0.14.6 live session (mod v2.19.7), then confirmed by a per-field log+dump investigation with adversarial verification. Resolved 2026-06-13.
+
+### Root cause
+
+The mod's "numeric requirement" (`NUMERIC_CAP_*`), "int-array requirement" (`INT_ARRAY_CAP_*`), and curve (`CURVE_REQUIREMENT_*`) cap paths assumed several requirement fields scale UP with player count, and capped them to `GENERIC_OBJECTIVE_CAP=10` (or `ceil(PlayerCountFuseCurve:GetFloatValue(6))`). The design docs flagged the 10 as "a bounded fallback until live logging measures the authored values." The live log measured them and disproved the assumption — they are FIXED or PROCEDURAL level-design goals, not player-scaled, with NO `PlayerCount*`/`*PerPlayer` mechanism on their classes:
+
+- `RequiredTicketMilestone` (LevelFunExitDoor + PartyCelebrationSpeaker) = constant **1500** at 8–9 players → capped to 10 (≈150× trivialization of Level FUN's exit/celebration goal).
+- `WarehouseRequiredCoinsTotals[]` (LevelFUNChunkManager) = **per-generation procedural** (164/138/227 vs 124/150/155 at the SAME 9 players) → capped to 10.
+- `RequiredFuseAmount` (FuseBoard) = fixed/seeded **9** at 7, 8 AND 9 players; the curve cap basis `GetFloatValue(6)` returned ~1 (a lerp-alpha between `RequiredFusesMin`/`Max`, not a fuse count) → slashed 9 → 1.
+
+These caps also had **no `≤6` player guard**, so they fired even at the 6-player baseline — diverging from vanilla at every count and making >6 play far easier than 6 (the inverse of the design rule).
+
+### Fix (v2.19.8)
+
+Removed the three cap subsystems entirely (tables + `cap_numeric_requirements` / `cap_int_array_*` / `cap_curve_*` functions + the `FuseBoard:OnFuseBoardInitialized` and `LevelFUNChunkManager:AddWarehouseRequiredCoins` hook registrations). Because every removed field is identical at 6 and >6 players, NOT capping keeps ">6 = same as 6" and cannot make >6 harder; the levels' supply is still scaled up independently. The genuinely player-scaled caps are preserved: `PlayersNeededToStartElevator` (tracks count 1:1), `FLevelObjective.ObjectiveAmount` gated by the game's own `bScalesWithPlayers` flag (observed amount = players+4), the all-players gates, the Level 6 puzzle, and the generator safety cap.
+
+### Still needs live data
+
+- `CoinGate.CoinsRequired` and `InteractableDoor.ItemAmountRequired` were never encountered in the log; the dump shows no scaling mechanism (so they were removed as fixed/procedural), but a live coin-gate / item-door encounter at varying counts would confirm.
+- Level 232 economy (`ScaledPricePercent` / `RequiredQuota`) was never visited this session — the v2.19.6 single-lever income model + the v2.19.7 write-verify remain unconfirmed in-game.
+- `NumberOfGenerators` (cap 10) never fired; confirm on a Level-1 ≥7-player run that it does not exceed the baseline.
+
 ## Second-run cap reapplication can fail after a completed save — FIXED in v2.19.4
 
 Priority: was low / follow-up investigation. Resolved 2026-06-07.

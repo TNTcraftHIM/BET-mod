@@ -1,9 +1,9 @@
-# Full Player-Scaling Audit (v2.19.7)
+# Full Player-Scaling Audit (v2.19.8)
 
 > Line-by-line read of every `LevelNChunkManager` / `GameState` / `GameMode` /
 > progression actor in `BETGame.hpp` (2026-06-02 dump, UE 5.7 MSVC shipping build).
 > This is the data that drives the per-class caps, curve-backed baselines,
-> supply scaling, and gate-disables in main.lua v2.19.7+.
+> supply scaling, and gate-disables in main.lua v2.19.8+.
 
 ---
 
@@ -31,39 +31,22 @@
 
 ---
 
-## Curve-backed requirement caps — use the authored 6-player runtime value
+## Numeric / curve / int-array requirement caps — REMOVED in v2.19.8
 
-These are player-count-scaled requirements where the dump exposes the curve object, so
-the mod can read the actual 6-player baseline at runtime instead of assuming `10`.
+These were capped on the assumption they scale up with player count. A live ≥7-player
+0.14.6 session (and a per-field log+dump investigation) DISPROVED that — they are FIXED or
+PROCEDURAL level-design goals with no `PlayerCount*`/`*PerPlayer` mechanism on their class,
+so capping them only deviated from the 6-player baseline (and trivialized levels). All
+removed; see `docs/research/known_issues.md` (v2.19.8 entry).
 
-| Class | Field | Cap | Notes |
-|-------|-------|-----|-------|
-| `FuseBoard` | `RequiredFuseAmount` | `PlayerCountFuseCurve:GetFloatValue(6)` (rounded up; fallback 10 if unreadable) | Level 3 fuse puzzle. |
-
-**Action:** use `cap_curve_requirements()` / per-instance `GetFloatValue(6)` for these fields.
-
-## Static numeric requirement caps — fallback at GENERIC_OBJECTIVE_CAP (10)
-
-These are player-count-scaled numeric requirements, not spawn counts or progress trackers.
-The static dump does not expose a per-field 6-player baseline for them, so `10` remains a
-bounded fallback until live logging measures the exact authored values:
-
-| Class | Field | Cap | Notes |
-|-------|-------|-----|-------|
-| `RepairableElectricalBox` | `RequiredFuseAmount` | 10 | Repair box requirement with no curve property exposed in the dump. |
-| `CoinGate` | `CoinsRequired` | 10 | Coins needed to open the gate. |
-| `InteractableDoor` | `ItemAmountRequired` | 10 | Door that requires a certain number of items placed on it. |
-| `LevelFunExitDoor` | `RequiredTicketMilestone` | 10 | FUN level exit door — ticket count threshold. |
-| `LevelFunExitPinger` | `ItemAmountRequired` | 10 | Same as InteractableDoor but for the pinger variant. |
-| `PartyCelebrationSpeaker` | `RequiredTicketMilestone` | 10 | FUN celebration speaker ticket threshold. |
-
-**Action:** use the same `cap_props_on_classes()` pattern as elevator/generator caps.
-
-## Requirement arrays (capped per element at GENERIC_OBJECTIVE_CAP)
-
-| Class | Field | Type | Notes |
-|-------|-------|------|-------|
-| `LevelFUNChunkManager` | `WarehouseRequiredCoinsTotals` | `TArray<int32>` | Per-warehouse coin requirement totals. Capped element-wise via `cap_int_array_prop()` and re-asserted by a hook on `AddWarehouseRequiredCoins`. **Live TArray mutation needs ≥7-player confirmation.** |
+| Class | Field | Live finding | v2.19.8 |
+|-------|-------|--------------|---------|
+| `FuseBoard` | `RequiredFuseAmount` | fixed/seeded 9 at 7/8/9 players; `PlayerCountFuseCurve:GetFloatValue(6)`≈1 is a lerp-alpha (between `RequiredFusesMin`/`Max`), not a fuse count → slashed 9→1 | **cap removed** |
+| `RepairableElectricalBox` | `RequiredFuseAmount` | no curve / `bRandomizeFuseAmount` seeded | **cap removed** |
+| `CoinGate` | `CoinsRequired` | no player-count mechanism (never observed) | **cap removed** |
+| `InteractableDoor` / `LevelFunExitPinger` | `ItemAmountRequired` | no player-count mechanism | **cap removed** |
+| `LevelFunExitDoor` / `PartyCelebrationSpeaker` | `RequiredTicketMilestone` | fixed 1500 across 8-9 players | **cap removed** |
+| `LevelFUNChunkManager` | `WarehouseRequiredCoinsTotals[]` | per-generation procedural (164/138/227 vs 124/150/155 at same 9p) | **cap removed** |
 
 ## NOT a numeric requirement — do NOT cap via the scalar/array path
 
@@ -119,18 +102,17 @@ and hazard fields remain untouched unless live testing proves a separate need.
 
 ---
 
-## Summary of all caps/scales applied by v2.19.7+ mod logic
+## Summary of all caps/scales applied by v2.19.8+ mod logic
 
 | What | Cap / scale value | Method |
 |------|-------------------|--------|
 | Lobby/session player cap (`TARGET_CAP`) | 16 (EOS hard limit) | Widget override + post-hooks on InitializeSelection/ClampMaxPlayers/IncreaseMaxPlayers |
-| Elevator presence gate (`Elevator_Base.PlayersNeededToStartElevator`) | ≤6 | `cap_props_on_classes()` per-class scan + hooks |
-| Generator count (`Level1ChunkManager.NumberOfGenerators`) | ≤10 | Same pattern |
-| Fuse board requirement (`FuseBoard.RequiredFuseAmount`) | ≤ `PlayerCountFuseCurve:GetFloatValue(6)` | Per-instance runtime curve read; fallback ≤10 if curve read fails |
-| Generic player-scaled objectives (`FLevelObjective.ObjectiveAmount` where `bScalesWithPlayers=true`) | ≤10 until a per-objective baseline is measured | Array scan across all GameStates |
-| Numeric requirement fields (CoinGate, InteractableDoor, FUN ticket doors, etc.) | ≤10 until per-field live baselines are measured | Per-class property cap |
-| Level FUN warehouse coin requirements (`WarehouseRequiredCoinsTotals[]`) | ≤10 per element | Int-array scan + `AddWarehouseRequiredCoins` hook |
+| Elevator presence gate (`Elevator_Base.PlayersNeededToStartElevator`) | ≤6 (live-confirmed player-scaled) | `cap_props_on_classes()` per-class scan + hooks |
+| Generator count (`Level1ChunkManager.NumberOfGenerators`) | ≤10 (safety net) | Same pattern |
+| Generic player-scaled objectives (`FLevelObjective.ObjectiveAmount` where `bScalesWithPlayers=true`) | ≤10 (game's own flag; observed amount = players+4) | Array scan across all GameStates |
 | Level 232 income (`ScaledPricePercent` only) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base; no-op at ≤6. `LaneMultiplier`/`CouponMultiplier` left at vanilla (v2.19.6, anti-compounding) |
+
+> Removed v2.19.8 (live log proved fixed/procedural, not player-scaled): `FuseBoard.RequiredFuseAmount` curve cap, `RepairableElectricalBox.RequiredFuseAmount`, `CoinGate.CoinsRequired`, `InteractableDoor`/`LevelFunExitPinger.ItemAmountRequired`, `LevelFunExitDoor`/`PartyCelebrationSpeaker.RequiredTicketMilestone`, `LevelFUNChunkManager.WarehouseRequiredCoinsTotals[]`.
 | "All players present" gates (`bRequiresAllPlayers` on teleporters/level exits) | false when >6 possessed | Instance scan + `OnSurvivorOverlap`/`OnAllPlayersPresent`/teleporter hooks |
 | Level 6 puzzle difficulty (`ALevel6PuzzleManager.bScaleWithPlayers`) | `false` when >6 possessed (no-op at ≤6; v2.19.5 guard) | Instance scan with `effective_player_count() > ALL_PLAYERS_GATE_CAP` guard |
 | Confirmed integer supply counts (Level 1 almond water, Level 3 lootbox wire/tape counts) | scale up by `possessed_players / 6` when >6 | First-observed runtime value is retained as base to avoid repeated multiplication. Float fields (RepairItemMultiplier, LootSpawnRatio) and Level 232 ItemSpawnRates removed v2.19.6 — see notes above |
