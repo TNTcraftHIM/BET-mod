@@ -1,6 +1,6 @@
 return {
     name = "BETPlayerCap",
-    version = "2.19.10",
+    version = "2.19.11",
     description = "Raise the player cap above 6 for Backrooms Escape Together, with host tools to gather players, switch levels, reload a stuck level, and board the elevator for 7+ player transitions.",
     author = "BETPlayerCap contributors",
 }

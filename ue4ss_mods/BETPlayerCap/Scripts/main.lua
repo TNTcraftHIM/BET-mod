@@ -7,10 +7,12 @@ local MOD_NAME = "BETPlayerCap"
 local TARGET_CAP = 16
 -- OBJECTIVE_CAP: cap for player-presence pass gates (e.g. elevator "players needed").
 local OBJECTIVE_CAP = 6
--- GENERATOR_CAP / GENERIC_OBJECTIVE_CAP: cap for player-scaled objective counts
---   (Level 1 generators, repairs, fuses, coins, doors, FUN tickets, and any
---   objective the game marks bScalesWithPlayers).
-local GENERATOR_CAP = 10
+-- GENERIC_OBJECTIVE_CAP: cap for player-scaled objective counts the game marks
+--   bScalesWithPlayers (the actual per-player requirement, e.g. "repair N generators").
+--   (The old GENERATOR_CAP on Level1ChunkManager.NumberOfGenerators was removed in
+--   v2.19.11: that field is the SCENE spawn count, not the requirement — the requirement
+--   is this bScalesWithPlayers ObjectiveAmount, and capping the spawn count could under-
+--   spawn below the repair goal.)
 local GENERIC_OBJECTIVE_CAP = 10
 -- ALL_PLAYERS_GATE_CAP: when there are more than this many possessed players, force
 --   bRequiresAllPlayers = false on teleporters (AInteractableTeleporter) and level
@@ -23,7 +25,7 @@ local ALL_PLAYERS_GATE_CAP = 6
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
 -- ======================================================================
-local VERSION = "2.19.10-difficulty-diag"
+local VERSION = "2.19.11-hazard-6p-cap"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -233,7 +235,7 @@ local function get_player_name(char, label)
     end)
 end
 
-log("v" .. VERSION .. " loaded - target cap: " .. TARGET_CAP .. ", objective cap: " .. OBJECTIVE_CAP .. ", generator cap: " .. GENERATOR_CAP)
+log("v" .. VERSION .. " loaded - target cap: " .. TARGET_CAP .. ", objective cap: " .. OBJECTIVE_CAP .. ", generic objective cap: " .. GENERIC_OBJECTIVE_CAP)
 
 ---------------------------------------------------------------------------
 -- ADAPTIVE CLASS DETECTION
@@ -415,13 +417,13 @@ local S232_PRICE_CLASSES = {
     "Level232GameState",
 }
 
--- == Generator count (Level 1) ==
-local GENERATOR_CAP_CLASSES = {
-    "Level1ChunkManager", "Level1ChunkManagerDebug",
-}
-local GENERATOR_CAP_PROPS = {
-    NumberOfGenerators = GENERATOR_CAP,
-}
+-- == Generator count (Level 1) — cap REMOVED in v2.19.11 ==
+-- Level1ChunkManager.NumberOfGenerators is the SCENE spawn count (how many generators
+-- exist, ~10 by design), NOT the player-scaled requirement. The requirement (how many to
+-- repair) is a bScalesWithPlayers FLevelObjective.ObjectiveAmount, already capped to the
+-- 6-player baseline via cap_level_objective_array. Capping the spawn count to a magic 10
+-- (with no ≤6 guard) broke "pure vanilla at ≤6" and could under-spawn below the repair
+-- goal. So the spawn count is left vanilla; difficulty stays ≤6p via the objective cap.
 
 -- == REMOVED in v2.19.8: the "numeric requirement" + "int-array requirement" caps ==
 -- These capped RequiredFuseAmount / CoinsRequired / ItemAmountRequired /
@@ -649,10 +651,6 @@ local function cap_known_objective_requirements(reason)
     return cap_props_on_classes(ELEVATOR_CLASSES, ELEVATOR_PROPS, reason)
 end
 
-local function cap_generator_requirements(reason)
-    return cap_props_on_classes(GENERATOR_CAP_CLASSES, GENERATOR_CAP_PROPS, reason)
-end
-
 -- Cap one unobserved scalar requirement DOWN to its 6-player-proportional equivalent
 -- (ceil(first_observed * 6 / players)). Anchored to the first observed value so it is
 -- idempotent and never compounds; only ever lowers. See PROPORTIONAL_CAP_CLASSES.
@@ -695,6 +693,64 @@ local function cap_proportional_requirements(reason)
                 if is_real_instance(obj) then
                     for _, prop in ipairs(PROPORTIONAL_CAP_PROPS) do
                         if cap_proportional_requirement(obj, prop, players, reason or class_name) then total = total + 1 end
+                    end
+                end
+            end
+        end
+    end
+    return total
+end
+
+-- v2.19.11: neutralize player-scaled MONSTER/HAZARD rates to the 6-player level.
+-- Per user direction ("difficulty must never scale above the 6-player level"), the one
+-- monster field that provably makes >6 harder — LevelNeg1Manager.EntitySpawnChancePerPlayer
+-- (shadow spawn chance the game multiplies by player count) — is scaled DOWN to its
+-- 6-player-equivalent: target = base * 6 / players. So cumulative shadow pressure at N>6
+-- ≈ a 6-player game (and is still bounded by the game's own MaxShadowSpawnAmount ceiling).
+-- FLOAT-safe (no integer rounding), anchored to the first-observed base (idempotent, never
+-- compounds), only ever LOWERS, no-op at ≤6. It can only reduce monster pressure — never
+-- make >6 harder. This is the mod's first monster-field write (was "leave monsters alone").
+local HAZARD_SCALE_CLASSES = {
+    "LevelNeg1Manager",   -- EntitySpawnChancePerPlayer
+}
+local HAZARD_SCALE_PROPS = {
+    "EntitySpawnChancePerPlayer",
+}
+local function neutralize_hazard_field(obj, prop, players, label)
+    local old = safe("HazRead_" .. prop, function() return obj[prop] end)
+    if type(old) ~= "number" or old <= 0 then return false end
+    local key = object_label(obj) .. ":" .. prop
+    local base = requirement_cap_original[key] or old
+    requirement_cap_original[key] = base
+    -- 6-player-equivalent per-player rate (float; players>6 => target<base). Round to 4 dp.
+    local target = math.floor((base * SUPPLY_BASE_PLAYERS / players) * 10000 + 0.5) / 10000
+    if old <= target then return false end
+    safe("HazWrite_" .. prop, function() obj[prop] = target return true end)
+    local now = safe("HazVerify_" .. prop, function() return obj[prop] end)
+    if type(now) == "number" and now <= target + 0.00001 then
+        if objective_cap_changed[key] ~= old then
+            objective_cap_changed[key] = old
+            log(string.format("[HAZARD] %s.%s %.4f -> %.4f (6p-equiv, base=%.4f players=%d %s)",
+                label, prop, old, target, base, players, object_label(obj)))
+        end
+        safe("Haz_fnu", function() obj:ForceNetUpdate() return true end)
+        return true
+    end
+    return false
+end
+
+local function neutralize_player_scaled_hazards(reason)
+    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local players = effective_player_count()
+    if players <= SUPPLY_BASE_PLAYERS then return 0 end
+    local total = 0
+    for _, class_name in ipairs(HAZARD_SCALE_CLASSES) do
+        local list = safe("HazFind_" .. class_name, function() return FindAllOf(class_name) end)
+        if list then
+            for _, obj in pairs(list) do
+                if is_real_instance(obj) then
+                    for _, prop in ipairs(HAZARD_SCALE_PROPS) do
+                        if neutralize_hazard_field(obj, prop, players, reason or class_name) then total = total + 1 end
                     end
                 end
             end
@@ -1038,7 +1094,6 @@ local function ensure_objective_cap_hooks()
     --     UFunction; OnRep_CurrentObjectives is the hookable replication entry point.
     register_objective_cap_hook("/Script/BETGame.Elevator_Base:CheckForPlayersInElevator")
     register_objective_cap_hook("/Script/BETGame.Elevator_Base:OnObjectiveCompleted")
-    register_cap_hook("/Script/BETGame.BETChunkManagerBase:GenerateChunks", GENERATOR_CAP_PROPS)
     register_supply_scale_hook("/Script/BETGame.BETChunkManagerBase:GenerateChunks")
     register_generic_objective_hook("/Script/BETGame.MultiplayerGameState:OnRep_CurrentObjectives")
     -- Re-assert the generic objective cap when the game re-evaluates quota mid-level.
@@ -1052,8 +1107,8 @@ end
 ExecuteInGameThread(function()
     pcall(ensure_objective_cap_hooks)
     pcall(cap_known_objective_requirements, "startup")
-    pcall(cap_generator_requirements, "startup")
     pcall(cap_proportional_requirements, "startup")
+    pcall(neutralize_player_scaled_hazards, "startup")
     pcall(cap_level6_puzzle_scale, "startup")
     pcall(scale_supply_for_more_players, "startup")
     pcall(cap_all_players_gates, "startup")
@@ -2063,8 +2118,8 @@ local function run_monitor()
             -- cap/scale pass, then arm the host keybinds.
             ensure_objective_cap_hooks()
             cap_known_objective_requirements("level-detect")
-            cap_generator_requirements("level-detect")
             cap_proportional_requirements("level-detect")
+            neutralize_player_scaled_hazards("level-detect")
             cap_level6_puzzle_scale("level-detect")
             scale_supply_for_more_players("level-detect")
             cap_all_players_gates("level-detect")
@@ -2123,8 +2178,8 @@ local function run_monitor()
     -- It does not scan arbitrary UObjects or touch current/progress/completed fields.
     if ENABLE_OBJECTIVE_CAP then
         cap_known_objective_requirements("monitor")
-        cap_generator_requirements("monitor")
         cap_proportional_requirements("monitor")
+        neutralize_player_scaled_hazards("monitor")
         cap_level6_puzzle_scale("monitor")
         scale_supply_for_more_players("monitor")
         cap_all_players_gates("monitor")
@@ -2176,5 +2231,5 @@ log("[PROBE] Host keybind Ctrl+O (read elevator gate, READ-ONLY probe/detect) wi
 log("[BOARD] Host keybind Ctrl+P (teleport all players into elevator) will arm once in a real level")
 log("[NUDGE] Host keybinds Ctrl+Arrows (noclip move) / Ctrl+PageUp-Down (Z) will arm once in a real level")
 log("[NOCLIP] Optional local keybind " .. SELF_NO_COLLISION_KEY_LABEL .. " (toggle self pawn collision) will arm once in a real level if this mod is installed")
-log("[OBJCAP] Player-scaled requirements are capped at " .. OBJECTIVE_CAP .. " (generators " .. GENERATOR_CAP .. ", session cap remains " .. TARGET_CAP .. ")")
+log("[OBJCAP] Player-scaled requirements are capped at " .. OBJECTIVE_CAP .. " (generic objectives " .. GENERIC_OBJECTIVE_CAP .. ", session cap remains " .. TARGET_CAP .. ")")
 log("[ADAPT] UEHelpers " .. (UEHelpers and "loaded" or "NOT FOUND — host-anchor disabled, will use cluster median"))

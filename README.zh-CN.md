@@ -20,13 +20,13 @@
 请使用 GitHub Releases 页面提供的完整 Windows 安装包：
 
 ```text
-BETPlayerCap-v2.19.10-full.zip
+BETPlayerCap-v2.19.11-full.zip
 ```
 
 本地构建也可能在 `dist/` 下生成同名文件，供维护者使用。
 
 请用追踪的校验和来验证你的下载
-（[`dist/BETPlayerCap-v2.19.10-full.zip.sha256`](dist/BETPlayerCap-v2.19.10-full.zip.sha256)）；
+（[`dist/BETPlayerCap-v2.19.11-full.zip.sha256`](dist/BETPlayerCap-v2.19.11-full.zip.sha256)）；
 参见 [`RELEASES.md`](RELEASES.md)。
 
 其中包含经过测试的 UE4SS 运行时/代理 DLL、BETPlayerCap、所需的 Keybinds 和

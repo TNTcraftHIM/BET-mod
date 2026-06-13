@@ -1,9 +1,9 @@
-# Full Player-Scaling Audit (v2.19.10)
+# Full Player-Scaling Audit (v2.19.11)
 
 > Line-by-line read of every `LevelNChunkManager` / `GameState` / `GameMode` /
 > progression actor in `BETGame.hpp` (2026-06-02 dump, UE 5.7 MSVC shipping build).
 > This is the data that drives the per-class caps, curve-backed baselines,
-> supply scaling, and gate-disables in main.lua v2.19.10+.
+> supply scaling, and gate-disables in main.lua v2.19.11+.
 
 ---
 
@@ -66,7 +66,7 @@ or actually player-scaled.
 |-------|----------|---------------------------|-------|
 | `ALevel3ChunkManager` | `PlayerCountToWireCurve`, `PlayerCountToRepairItemMultiplier` | UCurveFloat + multiplier name | Level 3 wire/repair-item spawn scaling. Covered by the generic `CurrentObjectives` path if these feed into it; otherwise needs explicit cap. |
 | `AFuseBoard` | `PlayerCountFuseCurve` (UCurveFloat) → `RequiredFuseAmount` | Curve indexed by player count, then written to RequiredFuseAmount | The cap on RequiredFuseAmount above covers the result of this curve. |
-| `ALevelNeg1Manager` | `EntitySpawnChancePerPlayer` + `MaxShadowSpawnAmount` | Per-player float with fixed ceiling | Shadow spawn rate scales UP with players (harder at >6), bounded by MaxShadowSpawnAmount. **Under review (v2.19.10):** the one monster field that provably makes >6 harder than 6; a read-only `[NEG1]` diagnostic now logs it — pending a live value to decide whether to neutralize it to the 6-player level. See `known_issues.md`. |
+| `ALevelNeg1Manager` | `EntitySpawnChancePerPlayer` + `MaxShadowSpawnAmount` | Per-player float with fixed ceiling | Shadow spawn rate scales UP with players (harder at >6). **NEUTRALIZED to the 6-player level (v2.19.11):** scaled DOWN to `base × 6 / players` (anchored, float-safe, only lowers, no-op at ≤6) so cumulative shadow pressure ≈ a 6-player game; still bounded by MaxShadowSpawnAmount. The mod's first monster-field write, per user direction. A read-only `[NEG1]` diagnostic logs the live value to confirm the effect. |
 | `Level232GameState` | `ScaledPricePercent` | Scaled by player count | Scaled up for >6 since v2.19.3 (sole income lever since v2.19.6); 0.14.6 patch notes confirm this is income percentage scaling. |
 
 ---
@@ -74,13 +74,15 @@ or actually player-scaled.
 ## Fixed supply/spawn fields — do NOT cap down as requirements
 
 These fields are fixed or supply-oriented rather than pass requirements. For >6 players,
-confirmed supply fields are scaled upward from their first observed runtime value; monster
-and hazard fields remain untouched unless live testing proves a separate need.
+confirmed supply fields are scaled upward from their first observed runtime value. Monster/
+hazard fields are left untouched UNLESS they scale UP with player count — the one that does,
+`LevelNeg1Manager.EntitySpawnChancePerPlayer`, is neutralized to the 6-player level (v2.19.11,
+see above); fixed monster counts (Facelings, robots, skin stealers) stay vanilla.
 
 ### Level 1 (`Level1ChunkManager`)
 - `MaxSkinStealers` — fixed monster count; left unchanged.
 - `NumberOfAlmondWater` — fixed supply count; **scaled up by `players / 6` for >6 players**.
-- `NumberOfGenerators` — currently capped at GENERATOR_CAP = 10, but this is a fixed/procedural field (not per-player) and the cap has NO ≤6 guard. **Flagged for removal (v2.19.10, see `known_issues.md`)** — same category error as the v2.19.8 over-caps; the real generator objective is the separately-capped `bScalesWithPlayers` `ObjectiveAmount`.
+- `NumberOfGenerators` — the SCENE spawn count (~10 by design), **left vanilla; the magic-10 cap was REMOVED in v2.19.11.** It is not the requirement — the player-scaled "repair N generators" goal is a `bScalesWithPlayers` `ObjectiveAmount`, already capped to the 6-player baseline. Capping the spawn count down (it had no ≤6 guard) broke vanilla at ≤6 and could under-spawn below the repair goal.
 - `NumberOfPuddles` — fixed hazard count; left unchanged.
 
 ### Level 232 (`Level232GameState` / `Level232ChunkManager`)
@@ -106,7 +108,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 
 ---
 
-## Summary of all caps/scales applied by v2.19.10+ mod logic
+## Summary of all caps/scales applied by v2.19.11+ mod logic
 
 | What | Cap / scale value | Method |
 |------|-------------------|--------|

@@ -1,4 +1,4 @@
-BETPlayerCap v2.19.10 完整 WINDOWS 安装包
+BETPlayerCap v2.19.11 完整 WINDOWS 安装包
 ======================================
 [ 中文（本文件） | English: README_INSTALL.txt ]
 
@@ -7,7 +7,7 @@ BETPlayerCap v2.19.10 完整 WINDOWS 安装包
 安装内容
 --------
 - 游戏 BET\Binaries\Win64 目录下的 UE4SS 运行时 / 代理文件
-- BETPlayerCap v2.19.10 Lua mod
+- BETPlayerCap v2.19.11 Lua mod
 - UE4SS Keybinds 与 shared UEHelpers 支持文件
 - 写入用户配置目录的防卡顿 Engine.ini
 - BET\Binaries\Win64\.BETPlayerCapBackup 下的备份数据

@@ -6,6 +6,30 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.11 (2026-06-13)
+
+Difficulty-curve adjustments per the design rule ">6 must never be harder than 6" (user
+decisions on the v2.19.10 review).
+
+- **Neutralize the one monster field that scaled >6 harder.** `LevelNeg1Manager.EntitySpawnChancePerPlayer`
+  (shadow spawn chance the game multiplies by player count) is now scaled DOWN to its
+  6-player-equivalent: `target = base × 6 / players` (float-safe, anchored to the
+  first-observed value so it never compounds, only ever lowers, no-op at ≤6). Cumulative
+  shadow pressure at N>6 now ≈ a 6-player game; still bounded by the game's own
+  `MaxShadowSpawnAmount`. This is the mod's first monster-field write — it can only REDUCE
+  monster pressure, never make >6 harder. (Reverses the old "leave all monster fields alone"
+  stance for this one provably-player-scaled hazard. Supply scaling-up is unchanged.)
+- **Removed the generator cap.** `Level1ChunkManager.NumberOfGenerators` is the SCENE spawn
+  count (~10 by design), not the player-scaled requirement — the "repair N generators" goal
+  is a `bScalesWithPlayers` `ObjectiveAmount`, already capped to the 6-player baseline. The
+  old `GENERATOR_CAP=10` (a magic number with NO ≤6 guard, on a fixed/procedural field — the
+  same category error v2.19.8 removed) is gone, along with its GenerateChunks cap hook. The
+  spawn count is left vanilla (so it can never under-spawn below the repair goal); difficulty
+  stays ≤6p via the objective cap. The GenerateChunks SUPPLY-scale hook is unchanged.
+- No change to: elevator/objective/gate/Level-6 caps, supply scaling, Level 232 income.
+- Still pending a live run: Level 232 relief tuning (see `known_issues.md` + the v2.19.10
+  `[S232]` diagnostics) and the FUN RedLight penalty curve.
+
 ## v2.19.10 (2026-06-13)
 
 Difficulty-curve review (driven by reports that some levels, especially Level 232, are
