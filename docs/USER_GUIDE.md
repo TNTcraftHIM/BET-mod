@@ -4,7 +4,7 @@
 
 ## Supported package
 
-Current public package: **BETPlayerCap v2.19.8 full Windows package**.
+Current public package: **BETPlayerCap v2.19.9 full Windows package**.
 
 The full package includes UE4SS runtime files, so normal users do **not** need to install
 UE4SS or Python separately.

@@ -20,7 +20,7 @@ Removed the three cap subsystems entirely (tables + `cap_numeric_requirements` /
 
 ### Still needs live data
 
-- `CoinGate.CoinsRequired` and `InteractableDoor.ItemAmountRequired` were never encountered in the log; the dump shows no scaling mechanism (so they were removed as fixed/procedural), but a live coin-gate / item-door encounter at varying counts would confirm.
+- `CoinGate.CoinsRequired`, `InteractableDoor`/`LevelFunExitPinger.ItemAmountRequired`, and `RepairableElectricalBox.RequiredFuseAmount` were never encountered in the log; the dump shows no scaling mechanism. v2.19.9 gives them a proportional "6-player-equivalent" guard (`ceil(first_observed × 6 / players)`, no-op at ≤6) instead of removal — safe whether they are fixed (slightly easier) or player-scaled (clamped to 6p). A live encounter at varying counts would confirm which, and could upgrade them to "leave fully vanilla" (if fixed) like the other confirmed fields.
 - Level 232 economy (`ScaledPricePercent` / `RequiredQuota`) was never visited this session — the v2.19.6 single-lever income model + the v2.19.7 write-verify remain unconfirmed in-game.
 - `NumberOfGenerators` (cap 10) never fired; confirm on a Level-1 ≥7-player run that it does not exceed the baseline.
 

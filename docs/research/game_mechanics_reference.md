@@ -479,14 +479,15 @@ No player-scaled fields identified.
 
 ---
 
-## Inventory of All Mod Actions (v2.19.8)
+## Inventory of All Mod Actions (v2.19.9)
 
 | Target | Action | Trigger |
 |--------|--------|---------|
 | Lobby widget | Cap to 16 players | Widget hook |
 | `AElevator_Base.PlayersNeededToStartElevator` | Cap at ≤6 (tracks player count 1:1) | Scan + hooks |
 | `Level1ChunkManager.NumberOfGenerators` | Cap at ≤10 (safety net; not yet confirmed player-scaled) | Scan + hooks |
-| `FLevelObjective.ObjectiveAmount` (where `bScalesWithPlayers=true`) | Cap at ≤10 (game's own scaling flag) | GameState array scan |
+| `FLevelObjective.ObjectiveAmount` (where `bScalesWithPlayers=true`) | Cap at ≤10 (game's own scaling flag; 10 = measured 6-player value, amount = players+4) | GameState array scan |
+| `CoinGate.CoinsRequired`, `InteractableDoor`/`LevelFunExitPinger.ItemAmountRequired`, `RepairableElectricalBox.RequiredFuseAmount` (UNOBSERVED) | "Never harder than 6" guard: cap DOWN to `ceil(first_observed × 6 / players)` when >6 (no-op at ≤6) | Startup + level-detect + monitor (v2.19.9) |
 | `bRequiresAllPlayers` on teleporters/exits | Force false when >6 players | Scan + hooks |
 | `Level232GameState.ScaledPricePercent` | Scale up by `players/6` when >6 (no-op at ≤6); single income lever | Startup + monitor + supply-scale hook |
 | `Level1ChunkManager.NumberOfAlmondWater` | Scale up by `players/6` (int count) | Supply scan |
@@ -497,4 +498,6 @@ No player-scaled fields identified.
 
 > Removed in v2.19.6 (over-scaling / double-counting the game's own 0.14.6 per-player logic): `AALevel232CheckoutLane.LaneMultiplier` and `CouponMultiplier` scaling (compounded income), `Level232ChunkManager.ItemSpawnRates` scaling (loot is now per-player), `Level3ChunkManager.RepairItemMultiplier` scaling (game derives it via `PlayerCountToRepairItemMultiplier` curve), and `LevelNeg1ChunkManager.LootSpawnRatio` scaling (clamped float, was integer-rounded). The float fields were also wrongly passed through `ceil_int`.
 
-> Removed in v2.19.8 (live ≥7-player log proved these are FIXED/PROCEDURAL level goals, not player-scaled — capping them trivialized levels): `FuseBoard.RequiredFuseAmount` (curve cap mis-read `GetFloatValue(6)`≈1, slashing a fixed 9 → 1), `RepairableElectricalBox.RequiredFuseAmount`, `CoinGate.CoinsRequired`, `InteractableDoor` / `LevelFunExitPinger.ItemAmountRequired`, `LevelFunExitDoor` / `PartyCelebrationSpeaker.RequiredTicketMilestone` (fixed 1500), and `LevelFUNChunkManager.WarehouseRequiredCoinsTotals[]` (per-generation procedural). None scale up with player count, so not capping keeps >6 the same as 6.
+> Cap removed in v2.19.8 (live ≥7-player log proved these are FIXED/PROCEDURAL level goals, not player-scaled — the old cap-to-10/curve trivialized levels). CONFIRMED-fixed (observed) → left fully vanilla: `FuseBoard.RequiredFuseAmount` (curve cap mis-read `GetFloatValue(6)`≈1, slashing a fixed 9 → 1), `LevelFunExitDoor` / `PartyCelebrationSpeaker.RequiredTicketMilestone` (fixed 1500), `LevelFUNChunkManager.WarehouseRequiredCoinsTotals[]` (per-generation procedural).
+>
+> UNOBSERVED (v2.19.9) → given a principled "6-player-equivalent" guard instead of the old magic number: `RepairableElectricalBox.RequiredFuseAmount`, `CoinGate.CoinsRequired`, `InteractableDoor` / `LevelFunExitPinger.ItemAmountRequired` are capped to `ceil(first_observed × 6 / players)` when >6 (no-op at ≤6, only lowers, anchored so it never compounds). Safe whether they turn out fixed (slightly easier) or player-scaled (clamped to 6p level) — never harder than 6.

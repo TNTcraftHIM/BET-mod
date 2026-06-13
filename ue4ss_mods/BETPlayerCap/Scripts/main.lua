@@ -23,7 +23,7 @@ local ALL_PLAYERS_GATE_CAP = 6
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
 -- ======================================================================
-local VERSION = "2.19.8-overcap-fix"
+local VERSION = "2.19.9-proportional-cap"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -384,6 +384,11 @@ local objective_cap_changed = {}
 local objective_cap_hooks_registered = false
 local objective_cap_hook_fired = {}
 local supply_scaled_original = {}
+-- First-observed value per object:prop for the proportional "6-player-equivalent" guard
+-- (see cap_proportional_requirements). Like supply_scaled_original it anchors to the
+-- FIRST value seen so re-applying the cap is idempotent (never compounds downward), and
+-- it is likewise preserved across reset_per_level_state.
+local requirement_cap_original = {}
 -- Forward declarations for helpers defined later in the file but used by cap logic.
 local collect_players
 
@@ -433,6 +438,26 @@ local GENERATOR_CAP_PROPS = {
 -- identical at 6 and >6 players, NOT capping keeps ">6 = same difficulty as 6" and cannot
 -- make >6 harder. Genuinely player-scaled requirements remain capped via the
 -- bScalesWithPlayers objective array, the elevator presence gate, and the generator cap.
+
+-- == "Never harder than 6" guard for UNOBSERVED scalar requirements (v2.19.9) ==
+-- These four fields were never seen in a live session, so unlike the confirmed-fixed
+-- fields above we cannot be 100% sure they don't scale up with player count. Instead of
+-- the old magic-number cap (to 10, which trivialized fixed goals), scale each DOWN to its
+-- 6-player-PROPORTIONAL equivalent: target = ceil(first_observed * 6 / players). This is a
+-- no-op at ≤6, only ever LOWERS (players>6 ⇒ target<first_observed), and is anchored to the
+-- first-observed value so it never compounds. If a field is fixed, this makes >6 slightly
+-- easier (acceptable: ">6 ≤ 6 difficulty"); if it actually scales up, it correctly clamps
+-- it to the 6-player level — so it can never make >6 harder than 6. RequiredTicketMilestone
+-- is intentionally NOT here (confirmed fixed 1500 — left fully vanilla).
+local PROPORTIONAL_CAP_CLASSES = {
+    "RepairableElectricalBox",   -- RequiredFuseAmount (bRandomizeFuseAmount; never observed)
+    "CoinGate",                  -- CoinsRequired (never observed)
+    "InteractableDoor",          -- ItemAmountRequired (never observed)
+    "LevelFunExitPinger",        -- ItemAmountRequired (never observed)
+}
+local PROPORTIONAL_CAP_PROPS = {
+    "RequiredFuseAmount", "CoinsRequired", "ItemAmountRequired",
+}
 
 -- == Confirmed supply/resource fields ==
 -- These are not objective requirements. For >6 players, scale them UP from their
@@ -626,6 +651,56 @@ end
 
 local function cap_generator_requirements(reason)
     return cap_props_on_classes(GENERATOR_CAP_CLASSES, GENERATOR_CAP_PROPS, reason)
+end
+
+-- Cap one unobserved scalar requirement DOWN to its 6-player-proportional equivalent
+-- (ceil(first_observed * 6 / players)). Anchored to the first observed value so it is
+-- idempotent and never compounds; only ever lowers. See PROPORTIONAL_CAP_CLASSES.
+local function cap_proportional_requirement(obj, prop, players, label)
+    if not ENABLE_OBJECTIVE_CAP or not obj or not is_real_instance(obj) then return false end
+    local old = safe("PropReqRead_" .. prop, function() return obj[prop] end)
+    if type(old) ~= "number" or old <= 0 then return false end
+    local key = object_label(obj) .. ":" .. prop
+    local base = requirement_cap_original[key] or old
+    requirement_cap_original[key] = base
+    local target = ceil_int(base * SUPPLY_BASE_PLAYERS / players)
+    if target < 1 then target = 1 end
+    if old <= target then return false end   -- already at/below the 6-player equivalent
+    safe("PropReqWrite_" .. prop, function() obj[prop] = target return true end)
+    local now = safe("PropReqVerify_" .. prop, function() return obj[prop] end)
+    if type(now) ~= "number" or now > target then
+        log(string.format("[OBJCAP] %s.%s write did not stick (old=%s now=%s target=%d)",
+            label, prop, tostring(old), tostring(now), target))
+        return false
+    end
+    if objective_cap_changed[key] ~= old then
+        objective_cap_changed[key] = old
+        log(string.format("[OBJCAP] %s.%s %d -> %d (6p-equiv, base=%d players=%d %s)",
+            label, prop, old, target, base, players, object_label(obj)))
+    end
+    safe("PropReq_fnu", function() obj:ForceNetUpdate() return true end)
+    return true
+end
+
+-- "Never harder than 6" guard: only runs for >6 possessed players (no-op at ≤6).
+local function cap_proportional_requirements(reason)
+    if not ENABLE_OBJECTIVE_CAP or not is_host_authority() then return 0 end
+    local players = effective_player_count()
+    if players <= SUPPLY_BASE_PLAYERS then return 0 end
+    local total = 0
+    for _, class_name in ipairs(PROPORTIONAL_CAP_CLASSES) do
+        local list = safe("PropFind_" .. class_name, function() return FindAllOf(class_name) end)
+        if list then
+            for _, obj in pairs(list) do
+                if is_real_instance(obj) then
+                    for _, prop in ipairs(PROPORTIONAL_CAP_PROPS) do
+                        if cap_proportional_requirement(obj, prop, players, reason or class_name) then total = total + 1 end
+                    end
+                end
+            end
+        end
+    end
+    return total
 end
 
 -- Force bRequiresAllPlayers=false on teleporters and level exits when there are
@@ -922,6 +997,7 @@ ExecuteInGameThread(function()
     pcall(ensure_objective_cap_hooks)
     pcall(cap_known_objective_requirements, "startup")
     pcall(cap_generator_requirements, "startup")
+    pcall(cap_proportional_requirements, "startup")
     pcall(cap_level6_puzzle_scale, "startup")
     pcall(scale_supply_for_more_players, "startup")
     pcall(cap_all_players_gates, "startup")
@@ -967,14 +1043,15 @@ end
 -- re-runs the full immediate cap/scale pass. Clears only the per-level *log-dedup*
 -- maps (so a re-detected level re-logs its caps) and the spawn/settle state.
 --
--- IMPORTANT: does NOT clear `supply_scaled_original`. That table holds the
--- FIRST-OBSERVED runtime value per object (keyed by full object path) and is the
--- anchor that keeps supply scaling idempotent — `scale_supply_number` always
--- scales `base * factor`, never the already-scaled value. Wiping it here would
--- let a re-detect re-capture an already-scaled value as the new base and compound
--- the multiplier (factor² ...). Stale entries for unloaded objects are harmless:
--- new objects get new paths, and if an object genuinely persists across a reset
--- its true first-observed base is exactly what we want to keep.
+-- IMPORTANT: does NOT clear `supply_scaled_original` (or `requirement_cap_original`).
+-- Both hold the FIRST-OBSERVED runtime value per object (keyed by full object path) and
+-- are the anchors that keep scaling/capping idempotent — `scale_supply_number` always
+-- scales `base * factor` and `cap_proportional_requirement` always caps `base * 6/players`,
+-- never the already-modified value. Wiping them here would let a re-detect re-capture an
+-- already-modified value as the new base and compound (supply: factor² up; requirement:
+-- (6/players)² down). Stale entries for unloaded objects are harmless: new objects get new
+-- paths, and if an object genuinely persists across a reset its true first-observed base is
+-- exactly what we want to keep.
 -- Safe: this only ever forces caps/scales to be re-applied; it never removes a cap.
 local function reset_per_level_state(reason)
     spawn_fix_applied = false
@@ -1930,6 +2007,7 @@ local function run_monitor()
             ensure_objective_cap_hooks()
             cap_known_objective_requirements("level-detect")
             cap_generator_requirements("level-detect")
+            cap_proportional_requirements("level-detect")
             cap_level6_puzzle_scale("level-detect")
             scale_supply_for_more_players("level-detect")
             cap_all_players_gates("level-detect")
@@ -1988,6 +2066,7 @@ local function run_monitor()
     if ENABLE_OBJECTIVE_CAP then
         cap_known_objective_requirements("monitor")
         cap_generator_requirements("monitor")
+        cap_proportional_requirements("monitor")
         cap_level6_puzzle_scale("monitor")
         scale_supply_for_more_players("monitor")
         cap_all_players_gates("monitor")

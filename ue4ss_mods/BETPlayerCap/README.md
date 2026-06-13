@@ -18,13 +18,15 @@ it to use the local-only `Ctrl+N` self no-collision toggle.
   (an outlier far from the group), they are teleported to the group. Settling-gated
   so it never fires mid-elevator-descent, and outlier-only so it never rubber-bands
   someone who walks off on purpose.
-- **Player-scaled requirement/supply handling:** only requirements that genuinely scale
-  with player count are capped to their 6-player baseline — the elevator presence gate
+- **Player-scaled requirement/supply handling:** requirements that genuinely scale with
+  player count are capped to their 6-player baseline — the elevator presence gate
   (`PlayersNeededToStartElevator` → 6) and objectives the game itself flags
-  `bScalesWithPlayers` (→ 10), plus a generator safety cap. Fixed/procedural level goals
-  (FUN ticket milestones, warehouse coin totals, fuse-board amounts, coin/item gates) are
-  left untouched — a live ≥7-player test showed they do not scale with players, so capping
-  them only trivialized the level (removed in v2.19.8). Confirmed integer supply counts are
+  `bScalesWithPlayers` (→ 10), plus a generator safety cap. Level goals that a live
+  ≥7-player test confirmed are FIXED/procedural (FUN ticket milestones = 1500, warehouse
+  coin totals, fuse-board amounts) are left fully vanilla — capping them only trivialized
+  the level. Requirements never seen live (coin gates, item doors, repair-box fuses) get a
+  conservative "never harder than 6" guard: capped down to their 6-player-proportional
+  equivalent only when >6 players (no-op at ≤6). Confirmed integer supply counts are
   multiplied upward for >6 players, and Level 232 income (`ScaledPricePercent`) is scaled up
   by `players/6` for >6 (no-op at ≤6).
 - **"All players" gate disabler:** when more than 6 players are present, teleporters

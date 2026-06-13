@@ -6,6 +6,27 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.9 (2026-06-13)
+
+Follow-up to v2.19.8: replace the removed magic-number cap with a principled
+"6-player-equivalent" guard for the requirement fields we have NOT yet observed live.
+
+- **"Never harder than 6" guard (proportional, not a magic number).** v2.19.8 removed the
+  cap-to-10 on `CoinGate.CoinsRequired`, `InteractableDoor` / `LevelFunExitPinger.ItemAmountRequired`,
+  and `RepairableElectricalBox.RequiredFuseAmount` — but those four were never seen in a
+  live session, so we cannot be 100% sure they don't scale up with player count. Instead of
+  the old arbitrary 10, they are now capped DOWN to their 6-player-proportional equivalent:
+  `target = ceil(first_observed × 6 / players)`. This is a no-op at ≤6, only ever lowers
+  (players>6 ⇒ target<base), and is anchored to the first-observed value (preserved across
+  re-detects) so it never compounds. If a field is fixed it makes >6 marginally easier
+  (acceptable: ">6 ≤ 6 difficulty"); if it actually scales up, it correctly clamps it to the
+  6-player level — so it can never make >6 harder than 6.
+- **Unchanged:** the CONFIRMED-fixed/procedural fields (`RequiredTicketMilestone`=1500,
+  `FuseBoard.RequiredFuseAmount`=9, `WarehouseRequiredCoinsTotals`) stay fully vanilla
+  (removed in v2.19.8) — they are observed identical at 6 and >6, so any cap would only make
+  >6 easier than 6 for no reason. The player-scaled caps (elevator→6, `ObjectiveAmount`→10
+  which is the measured 6-player value, all-players gates, Level 6 puzzle) are unchanged.
+
 ## v2.19.8 (2026-06-13)
 
 Driven by a real ≥7-player (up to 9) BET 0.14.6 live session (v2.19.7), then
