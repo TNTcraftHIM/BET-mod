@@ -1,9 +1,9 @@
-# Full Player-Scaling Audit (v2.19.9)
+# Full Player-Scaling Audit (v2.19.10)
 
 > Line-by-line read of every `LevelNChunkManager` / `GameState` / `GameMode` /
 > progression actor in `BETGame.hpp` (2026-06-02 dump, UE 5.7 MSVC shipping build).
 > This is the data that drives the per-class caps, curve-backed baselines,
-> supply scaling, and gate-disables in main.lua v2.19.9+.
+> supply scaling, and gate-disables in main.lua v2.19.10+.
 
 ---
 
@@ -66,7 +66,7 @@ or actually player-scaled.
 |-------|----------|---------------------------|-------|
 | `ALevel3ChunkManager` | `PlayerCountToWireCurve`, `PlayerCountToRepairItemMultiplier` | UCurveFloat + multiplier name | Level 3 wire/repair-item spawn scaling. Covered by the generic `CurrentObjectives` path if these feed into it; otherwise needs explicit cap. |
 | `AFuseBoard` | `PlayerCountFuseCurve` (UCurveFloat) → `RequiredFuseAmount` | Curve indexed by player count, then written to RequiredFuseAmount | The cap on RequiredFuseAmount above covers the result of this curve. |
-| `ALevelNeg1Manager` | `EntitySpawnChancePerPlayer` + `MaxShadowSpawnAmount` | Per-player float with fixed ceiling | Shadow spawn rate scales but is bounded by MaxShadowSpawnAmount (fixed). Not a blocking gate, just harder at >6. **Not capped** — this is monster difficulty, not an objective requirement. |
+| `ALevelNeg1Manager` | `EntitySpawnChancePerPlayer` + `MaxShadowSpawnAmount` | Per-player float with fixed ceiling | Shadow spawn rate scales UP with players (harder at >6), bounded by MaxShadowSpawnAmount. **Under review (v2.19.10):** the one monster field that provably makes >6 harder than 6; a read-only `[NEG1]` diagnostic now logs it — pending a live value to decide whether to neutralize it to the 6-player level. See `known_issues.md`. |
 | `Level232GameState` | `ScaledPricePercent` | Scaled by player count | Scaled up for >6 since v2.19.3 (sole income lever since v2.19.6); 0.14.6 patch notes confirm this is income percentage scaling. |
 
 ---
@@ -80,7 +80,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 ### Level 1 (`Level1ChunkManager`)
 - `MaxSkinStealers` — fixed monster count; left unchanged.
 - `NumberOfAlmondWater` — fixed supply count; **scaled up by `players / 6` for >6 players**.
-- `NumberOfGenerators` — covered separately by GENERATOR_CAP = 10 (fixed value, not per-player; the cap is just a safety net if the game initializes it above 10).
+- `NumberOfGenerators` — currently capped at GENERATOR_CAP = 10, but this is a fixed/procedural field (not per-player) and the cap has NO ≤6 guard. **Flagged for removal (v2.19.10, see `known_issues.md`)** — same category error as the v2.19.8 over-caps; the real generator objective is the separately-capped `bScalesWithPlayers` `ObjectiveAmount`.
 - `NumberOfPuddles` — fixed hazard count; left unchanged.
 
 ### Level 232 (`Level232GameState` / `Level232ChunkManager`)
@@ -106,7 +106,7 @@ and hazard fields remain untouched unless live testing proves a separate need.
 
 ---
 
-## Summary of all caps/scales applied by v2.19.9+ mod logic
+## Summary of all caps/scales applied by v2.19.10+ mod logic
 
 | What | Cap / scale value | Method |
 |------|-------------------|--------|

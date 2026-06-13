@@ -6,6 +6,33 @@ All notable changes to the BETPlayerCap UE4SS mod and the surrounding research w
 > Older entries preserve development history and may mention superseded keybinds or
 > hypotheses.
 
+## v2.19.10 (2026-06-13)
+
+Difficulty-curve review (driven by reports that some levels, especially Level 232, are
+too hard with more players). A full parameter audit found that **Level 232 has NO
+player-count-scaling field** — quota, time, days, Facelings, robots, loot are all
+fixed/procedural (same at 6 and >6), and 0.14.6 made its loot per-player — so the
+"harder with more players" is systemic (0.14.6 cut warehouse time 30s + shrank it +
+reduced loot density; plus big-group throughput/monster/coordination overhead), not a
+scaling parameter. There is **zero runtime data** for Level 232 (never visited in any
+live log), so this release ships **read-only diagnostics only** — no balance number is
+guessed blind.
+
+- **Added read-only Level 232 difficulty diagnostics.** The existing one-shot `[S232]`
+  log now also reports the day/night timer (`TimeLimit`, `TimeRemaining`, `DayAmount`,
+  `CurrentDayIndex`), checkout throughput (lane count + `SellDuration`/`LaneMultiplier`/
+  `CouponMultiplier`), and monster config (`FacelingSpawnChunkInterval`,
+  `FacelingMarkerTargetCountPerChunk`, `NumGroceryStoreRobots`). One live ≥7-player 232
+  run now reveals whether the bottleneck is time, selling throughput, monsters, or quota.
+- **Added read-only Level -1 shadow diagnostic (`[NEG1]`).** Logs
+  `EntitySpawnChancePerPlayer` + `MaxShadowSpawnAmount` — the one monster field that
+  provably scales monster pressure UP with player count (so >6 is harder than 6 there).
+  Data needed before deciding whether to neutralize it to the 6-player level.
+- No gameplay behavior change: both probes only read + log; no writes, no-op at every
+  player count. The actual difficulty tuning (Level 232 relief, monster neutralization,
+  removing the unsound generator cap) is deferred until a live run provides the values —
+  see `docs/research/known_issues.md`.
+
 ## v2.19.9 (2026-06-13)
 
 Follow-up to v2.19.8: replace the removed magic-number cap with a principled

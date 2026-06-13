@@ -1,5 +1,22 @@
 # Known follow-up issues
 
+## Difficulty curve: "some levels too hard with more players" (esp. Level 232) — IN PROGRESS (v2.19.10 diagnostics)
+
+Players report some levels feel too hard at >6. A full parameter audit (dump + 0.14.6 notes + the v2.19.7 live log) found:
+
+- **Only 7 fields in the whole game scale difficulty with player count:** `FLevelObjective.bScalesWithPlayers`→ObjectiveAmount (HANDLED, cap→10); `FuseBoard.PlayerCountFuseCurve` (fixed 9 in the live log; cap removed v2.19.8); `Level3 PlayerCountToWireCurve`/`PlayerCountToRepairItemMultiplier` (SUPPLY — more wire/repair with more players, helps); `Level6 bScaleWithPlayers` (HANDLED, →false); `FUN RedLight PlayerCountFailPenaltyCurve` (UNHANDLED, direction unknown); `Neg1 EntitySpawnChancePerPlayer` (UNHANDLED — more shadows with more players → genuinely harder).
+- **Level 232 (the hardest) has NO player-count field at all.** Quota / time / days / Facelings / robots / loot are fixed or procedural — mechanically identical at 6 and >6, and 0.14.6 made its loot per-player (more players = more loot). The "harder" is systemic: 0.14.6 cut warehouse time 30s, shrank the warehouse, reduced loot density; plus big-group selling-throughput + monster-chaos + coordination. There is ZERO runtime data for 232 (never visited live).
+
+### v2.19.10 (shipped): read-only diagnostics only
+Added `[S232]` timer/checkout/monster logging and `[NEG1]` shadow logging. No balance number guessed blind. One live ≥7-player run hitting Level 232 + Level -1 will reveal the bottleneck.
+
+### Pending decisions (need user call and/or live data)
+1. **Generator cap removal (recommended):** `cap_generator_requirements` caps `NumberOfGenerators`→10 with NO `≤6` guard (so it breaks "pure vanilla at ≤6") on a fixed/procedural field — the same category error v2.19.8 fixed. Never fires in the live log. Remove it (the actual generator objective is the separately-capped `bScalesWithPlayers` `ObjectiveAmount`).
+2. **Monster policy (Neg1 `EntitySpawnChancePerPlayer`):** the one monster field that makes >6 harder. Decide whether to neutralize it to the 6-player level (first monster-field write; bounded by `MaxShadowSpawnAmount`). Needs the `[NEG1]` value first.
+3. **FUN RedLight `PlayerCountFailPenaltyCurve`:** unhandled, curve direction unknown — do NOT cap blind (the v2.19.8 FuseBoard `GetFloatValue(6)`≈1 trap). Diagnose first.
+4. **Level 232 relief:** after a live run, pick ONE lever (do not stack — v2.19.6 compounding trap): linear/`sqrt` income via `ScaledPricePercent`, OR cap `RequiredQuota` toward 6p, OR per-day time via `AddTimeToCurrentDay` (needs a day-start hook for idempotency). The mod already scales income; confirm it isn't already over-compensating given 0.14.6 per-player loot.
+
+
 ## Over-capping fixed/procedural level goals trivialized Level FUN & Level 3 — FIXED in v2.19.8
 
 Found from a real ≥7-player (up to 9) BET 0.14.6 live session (mod v2.19.7), then confirmed by a per-field log+dump investigation with adversarial verification. Resolved 2026-06-13.

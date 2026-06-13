@@ -23,7 +23,7 @@ local ALL_PLAYERS_GATE_CAP = 6
 local SUPPLY_BASE_PLAYERS = 6
 local ENABLE_SUPPLY_SCALING = true
 -- ======================================================================
-local VERSION = "2.19.9-proportional-cap"
+local VERSION = "2.19.10-difficulty-diag"
 
 -- Feature toggles. Ctrl+K/L level switch is a normal user feature (kept ON).
 -- ENABLE_PERIODIC_DIAG stays OFF for release (pure diagnostics / log spam).
@@ -782,6 +782,41 @@ local function cap_s232_price(reason)
                         local cold = safe("S232R_CLD", function() return obj.ColdItemMultiplier end)
                         log(string.format("[S232] diagnostics (%s): ScaledPricePercent=%.4f RequiredQuota=%.0f CurrentQuota=%.0f MaxPurchaseItems=%s ColdMult=%s players=%d",
                             reason or "monitor", sp or -1, rq or -1, cq or -1, tostring(maxp), tostring(cold), players))
+                        -- v2.19.10: READ-ONLY difficulty probe. Level 232 has NO player-count
+                        -- scaling field, so any big-group relief must be calibrated from these
+                        -- runtime values (time/throughput/monsters), never guessed blind.
+                        local dn = find_first_instance("Level232DayNightManager")
+                        if dn then
+                            log(string.format("[S232] timer: TimeLimit=%s TimeRemaining=%s DayAmount=%s CurrentDay=%s WarnTime=%s",
+                                tostring(safe("S232_TL", function() return dn.TimeLimit end)),
+                                tostring(safe("S232_TR", function() return dn:GetTimeRemaining() end)),
+                                tostring(safe("S232_DA", function() return dn.DayAmount end)),
+                                tostring(safe("S232_DI", function() return dn.CurrentDayIndex end)),
+                                tostring(safe("S232_WT", function() return dn.DayCycleWarningTime end))))
+                        end
+                        local lanes = safe("S232_LF", function() return FindAllOf("AALevel232CheckoutLane") end)
+                        if lanes then
+                            local nlanes, sample = 0, nil
+                            for _, ln in pairs(lanes) do
+                                if is_real_instance(ln) then
+                                    nlanes = nlanes + 1
+                                    if not sample then
+                                        sample = string.format("SellDuration=%s LaneMult=%s Coupon=%s",
+                                            tostring(safe("S232_SD", function() return ln.SellDuration end)),
+                                            tostring(safe("S232_LM", function() return ln.LaneMultiplier end)),
+                                            tostring(safe("S232_CM", function() return ln.CouponMultiplier end)))
+                                    end
+                                end
+                            end
+                            log(string.format("[S232] checkout: lanes=%d (%s)", nlanes, sample or "n/a"))
+                        end
+                        local cm232 = find_first_instance("Level232ChunkManager")
+                        if cm232 then
+                            log(string.format("[S232] monsters: FacelingChunkInterval=%s FacelingTargetPerChunk=%s GroceryRobots=%s",
+                                tostring(safe("S232_FCI", function() return cm232.FacelingSpawnChunkInterval end)),
+                                tostring(safe("S232_FTP", function() return cm232.FacelingMarkerTargetCountPerChunk end)),
+                                tostring(safe("S232_GR", function() return cm232.NumGroceryStoreRobots end))))
+                        end
                         s232_price_logged = true
                     end
                 end
@@ -790,6 +825,27 @@ local function cap_s232_price(reason)
     end
     if not s232_live then return 0 end
     return total
+end
+
+-- v2.19.10: READ-ONLY probe of Level -1 shadow-spawn scaling. EntitySpawnChancePerPlayer
+-- scales monster pressure UP with player count (bounded by MaxShadowSpawnAmount) — the one
+-- monster field that provably makes >6 harder than 6. Logged once per level so we can decide
+-- whether to neutralize it to the 6-player level and whether MaxShadowSpawnAmount already
+-- saturates at <=6 (which would make a cap a near-no-op). No writes — diagnostics only.
+local neg1_diag_logged = false
+local function probe_neg1_difficulty(reason)
+    if neg1_diag_logged or not is_host_authority() then return 0 end
+    local mgr = find_first_instance("LevelNeg1Manager")
+    if not mgr then return 0 end
+    neg1_diag_logged = true
+    log(string.format("[NEG1] diagnostics (%s): EntitySpawnChancePerPlayer=%s MaxShadowSpawnAmount=%s MinSpawnDist=%s MaxSpawnDist=%s players=%d",
+        reason or "monitor",
+        tostring(safe("Neg1_ESC", function() return mgr.EntitySpawnChancePerPlayer end)),
+        tostring(safe("Neg1_MAX", function() return mgr.MaxShadowSpawnAmount end)),
+        tostring(safe("Neg1_MIN", function() return mgr.MinSpawnDistance end)),
+        tostring(safe("Neg1_MAXD", function() return mgr.MaxSpawnDistance end)),
+        effective_player_count()))
+    return 0
 end
 
 local function cap_level_objective_array(owner, prop, reason)
@@ -1061,6 +1117,7 @@ local function reset_per_level_state(reason)
     objective_cap_changed = {}
     objective_cap_hook_fired = {}
     s232_price_logged = false
+    neg1_diag_logged = false
     l6_scale_logged = false
     log("[STATE] per-level state re-armed (" .. tostring(reason) .. ")")
 end
@@ -2012,6 +2069,7 @@ local function run_monitor()
             scale_supply_for_more_players("level-detect")
             cap_all_players_gates("level-detect")
             cap_s232_price("level-detect")
+            probe_neg1_difficulty("level-detect")
             cap_generic_scaled_objectives("level-detect")
             ensure_summon_keybind()
             ensure_levelsw_keybind()
@@ -2071,6 +2129,7 @@ local function run_monitor()
         scale_supply_for_more_players("monitor")
         cap_all_players_gates("monitor")
         cap_s232_price("monitor")
+        probe_neg1_difficulty("monitor")
         cap_generic_scaled_objectives("monitor")
     end
 
